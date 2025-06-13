@@ -70,7 +70,7 @@ export interface AppState {
   currentItemIndex: number;
   teamMembers: User[];
 }
-
+git
 export interface VideoParticipant {
   id: string;
   name: string;
