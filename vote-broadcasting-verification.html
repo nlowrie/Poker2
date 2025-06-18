@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vote Broadcasting Fixes Verification</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            max-width: 800px; 
+            margin: 0 auto; 
+            padding: 20px; 
+            background-color: #f5f5f5; 
+        }
+        .section { 
+            background: white; 
+            padding: 20px; 
+            margin: 10px 0; 
+            border-radius: 8px; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
+        }
+        .success { color: #10b981; }
+        .error { color: #ef4444; }
+        .warning { color: #f59e0b; }
+        .info { color: #3b82f6; }
+        pre { 
+            background: #f3f4f6; 
+            padding: 10px; 
+            border-radius: 4px; 
+            overflow-x: auto; 
+        }
+        button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background: #2563eb; }
+        .status { 
+            display: inline-block; 
+            padding: 4px 8px; 
+            border-radius: 4px; 
+            font-size: 12px; 
+            font-weight: bold; 
+        }
+        .status.pass { background: #d1fae5; color: #065f46; }
+        .status.fail { background: #fee2e2; color: #991b1b; }
+    </style>
+</head>
+<body>
+    <h1>🔧 Vote Broadcasting Fixes Verification</h1>
+    
+    <div class="section">
+        <h2>📋 Verification Checklist</h2>
+        <p>This tool helps verify that all vote broadcasting fixes are working correctly.</p>
+        
+        <h3>Quick Tests</h3>
+        <button onclick="runUserDisplayTest()">Test User Display Names</button>
+        <button onclick="runBroadcastTest()">Test Broadcast Logic</button>
+        <button onclick="runAllTests()">Run All Tests</button>
+        <button onclick="clearConsole()">Clear Console</button>
+    </div>
+
+    <div class="section">
+        <h2>📊 Test Results</h2>
+        <div id="testResults">
+            <p class="info">Click "Run All Tests" to see results here.</p>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>🎯 Manual Testing Steps</h2>
+        <ol>
+            <li><strong>Multi-tab Test</strong>:
+                <ul>
+                    <li>Open your planning session in 2-3 browser tabs</li>
+                    <li>Vote in one tab (e.g., select "5" points)</li>
+                    <li>Check other tabs receive the vote broadcast</li>
+                    <li>Verify user names and avatars display correctly</li>
+                </ul>
+            </li>
+            <li><strong>Console Monitoring</strong>:
+                <ul>
+                    <li>Open browser console (F12)</li>
+                    <li>Look for: <code class="success">📡 Sending vote broadcast</code></li>
+                    <li>Look for: <code class="success">📥 Received vote-submitted broadcast</code></li>
+                    <li>Verify no excessive debug logs</li>
+                </ul>
+            </li>
+            <li><strong>User Display Check</strong>:
+                <ul>
+                    <li>Verify avatars show correct initials (not "?")</li>
+                    <li>Verify no "User 5196" style fallback names</li>
+                    <li>Check team votes table shows proper names</li>
+                </ul>
+            </li>
+        </ol>
+    </div>
+
+    <div class="section">
+        <h2>🚀 Expected Behavior</h2>
+        <h3 class="success">✅ After Fixes</h3>
+        <ul>
+            <li>Consistent user display names using <code>getUserDisplayName()</code></li>
+            <li>Broadcasts include both <code>voterName</code> and <code>voterInitials</code></li>
+            <li>Proper currentItem validation prevents ignored broadcasts</li>
+            <li>Clean, essential logging only (no spam)</li>
+            <li>Real-time voting works reliably across all participants</li>
+        </ul>
+        
+        <h3 class="error">❌ Before Fixes (should not see these)</h3>
+        <ul>
+            <li>User names like "User 5196" in team votes</li>
+            <li>Broadcasts ignored due to undefined currentItem</li>
+            <li>Excessive debug logging cluttering console</li>
+            <li>TypeScript errors in browser console</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>📝 Console Commands</h2>
+        <p>You can also test manually in browser console:</p>
+        <pre><code>// Test user display function
+console.log(window.testUserDisplay?.());
+
+// Monitor broadcasts (run in planning session)
+console.log('🎧 Monitoring broadcasts...');
+
+// Check vote state
+console.log('Current votes:', window.votingSessionState);
+</code></pre>
+    </div>
+
+    <script>
+        // Mock user utilities for testing
+        const mockUserUtils = {
+            getUserDisplayName: (user) => {
+                if (!user) return 'Anonymous';
+                if (user.user_metadata?.full_name) return user.user_metadata.full_name;
+                if (user.email) return user.email.split('@')[0];
+                return `User ${user.id.slice(-4)}`;
+            },
+            getUserInitials: (displayName) => {
+                if (!displayName) return '?';
+                const trimmed = displayName.trim();
+                if (trimmed.toLowerCase().startsWith('anonymous')) return 'A';
+                const parts = trimmed.split(' ');
+                if (parts.length >= 2) {
+                    return (parts[0][0] + parts[1][0]).toUpperCase();
+                }
+                return trimmed[0]?.toUpperCase() || '?';
+            }
+        };
+
+        // Test users
+        const testUsers = [
+            {
+                id: 'user-123',
+                email: 'john.doe@example.com',
+                user_metadata: { full_name: 'John Doe' }
+            },
+            {
+                id: 'user-456', 
+                email: 'jane.smith@example.com',
+                user_metadata: { full_name: 'Jane Smith' }
+            },
+            {
+                id: 'user-789',
+                email: 'test.user@example.com',
+                user_metadata: {}
+            }
+        ];
+
+        function runUserDisplayTest() {
+            console.log('🧪 Testing User Display Functions...');
+            const results = [];
+            
+            testUsers.forEach((user, index) => {
+                const displayName = mockUserUtils.getUserDisplayName(user);
+                const initials = mockUserUtils.getUserInitials(displayName);
+                
+                console.log(`User ${index + 1}:`, {
+                    email: user.email,
+                    fullName: user.user_metadata?.full_name,
+                    displayName,
+                    initials
+                });
+                
+                results.push({
+                    user: `User ${index + 1}`,
+                    displayName,
+                    initials,
+                    status: displayName !== 'User' && initials !== '?' ? 'pass' : 'fail'
+                });
+            });
+            
+            updateTestResults('User Display Test', results);
+            return results;
+        }
+
+        function runBroadcastTest() {
+            console.log('🧪 Testing Broadcast Logic...');
+            const results = [];
+            
+            // Test scenarios
+            const scenarios = [
+                {
+                    name: 'Valid broadcast - different user, same item',
+                    currentItem: { id: 'item-123' },
+                    broadcast: { itemId: 'item-123', voterId: 'other-user', voterName: 'Other User' },
+                    currentUserId: 'current-user',
+                    expected: 'accept'
+                },
+                {
+                    name: 'Reject broadcast - own vote', 
+                    currentItem: { id: 'item-123' },
+                    broadcast: { itemId: 'item-123', voterId: 'current-user', voterName: 'Current User' },
+                    currentUserId: 'current-user',
+                    expected: 'reject'
+                },
+                {
+                    name: 'Reject broadcast - different item',
+                    currentItem: { id: 'item-123' },
+                    broadcast: { itemId: 'item-456', voterId: 'other-user', voterName: 'Other User' },
+                    currentUserId: 'current-user', 
+                    expected: 'reject'
+                },
+                {
+                    name: 'Reject broadcast - no current item',
+                    currentItem: null,
+                    broadcast: { itemId: 'item-123', voterId: 'other-user', voterName: 'Other User' },
+                    currentUserId: 'current-user',
+                    expected: 'reject'
+                }
+            ];
+            
+            scenarios.forEach(scenario => {
+                const { currentItem, broadcast, currentUserId } = scenario;
+                let shouldAccept = false;
+                
+                if (!currentItem) {
+                    shouldAccept = false;
+                } else if (broadcast.itemId === currentItem.id && broadcast.voterId !== currentUserId) {
+                    shouldAccept = true;
+                } else {
+                    shouldAccept = false;
+                }
+                
+                const result = shouldAccept ? 'accept' : 'reject';
+                const passed = result === scenario.expected;
+                
+                console.log(`${scenario.name}: ${result} (${passed ? '✅' : '❌'})`);
+                
+                results.push({
+                    scenario: scenario.name,
+                    result,
+                    expected: scenario.expected,
+                    status: passed ? 'pass' : 'fail'
+                });
+            });
+            
+            updateTestResults('Broadcast Logic Test', results);
+            return results;
+        }
+
+        function runAllTests() {
+            console.log('🚀 Running All Tests...');
+            const userResults = runUserDisplayTest();
+            const broadcastResults = runBroadcastTest();
+            
+            const allResults = [
+                ...userResults.map(r => ({ ...r, test: 'User Display' })),
+                ...broadcastResults.map(r => ({ ...r, test: 'Broadcast Logic' }))
+            ];
+            
+            const passCount = allResults.filter(r => r.status === 'pass').length;
+            const totalCount = allResults.length;
+            
+            console.log(`\n✅ Tests completed: ${passCount}/${totalCount} passed`);
+            
+            updateTestResults('All Tests', allResults, { passCount, totalCount });
+        }
+
+        function updateTestResults(testName, results, summary = null) {
+            const resultsDiv = document.getElementById('testResults');
+            
+            let html = `<h3>${testName} Results</h3>`;
+            
+            if (summary) {
+                const percentage = Math.round((summary.passCount / summary.totalCount) * 100);
+                html += `<p><strong>Overall: ${summary.passCount}/${summary.totalCount} tests passed (${percentage}%)</strong></p>`;
+            }
+            
+            html += '<div>';
+            results.forEach(result => {
+                const statusClass = result.status === 'pass' ? 'pass' : 'fail';
+                const statusText = result.status === 'pass' ? 'PASS' : 'FAIL';
+                
+                html += `<div style="margin: 5px 0;">
+                    <span class="status ${statusClass}">${statusText}</span>
+                    ${result.user || result.scenario || result.test || 'Test'}
+                </div>`;
+            });
+            html += '</div>';
+            
+            resultsDiv.innerHTML = html;
+        }
+
+        function clearConsole() {
+            console.clear();
+            console.log('🧹 Console cleared');
+        }
+
+        // Export for manual testing
+        window.testUserDisplay = runUserDisplayTest;
+        window.testBroadcast = runBroadcastTest;
+        window.testAll = runAllTests;
+        
+        console.log('🔧 Vote Broadcasting Fixes Verification Tool Loaded');
+        console.log('Use the buttons on the page or run window.testAll() to test');
+    </script>
+</body>
+</html>

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { LogOut, Crown } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { getUserDisplayName, getUserInitials } from '../utils/userUtils';
 
 interface UserIconProps {
   className?: string;
@@ -11,19 +12,9 @@ export default function UserIcon({ className = '' }: UserIconProps) {
   const [showDropdown, setShowDropdown] = useState(false);
 
   if (!user) return null;
-  const displayName = user.user_metadata?.full_name || user.email?.split('@')[0] || 'User';
+  const displayName = getUserDisplayName(user);
   const userRole = user.user_metadata?.role || 'Team Member';
   const isModerator = userRole === 'Moderator';
-
-  // Generate initials for avatar
-  const getInitials = (name: string) => {
-    return name
-      .split(' ')
-      .map(word => word.charAt(0))
-      .join('')
-      .toUpperCase()
-      .slice(0, 2);
-  };
 
   const handleSignOut = async () => {
     try {
@@ -39,10 +30,9 @@ export default function UserIcon({ className = '' }: UserIconProps) {
       <button
         onClick={() => setShowDropdown(!showDropdown)}
         className="flex items-center space-x-3 p-2 rounded-lg hover:bg-gray-100 transition-colors duration-200"
-      >
-        {/* Avatar with initials */}
+      >        {/* Avatar with initials */}
         <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-semibold text-sm">
-          {getInitials(displayName)}
+          {getUserInitials(displayName)}
         </div>
         
         {/* User info */}
@@ -70,8 +60,7 @@ export default function UserIcon({ className = '' }: UserIconProps) {
           <div className="absolute right-0 top-full mt-1 w-64 bg-white rounded-lg shadow-lg border border-gray-200 z-20 py-2">
             {/* User info section */}
             <div className="px-4 py-3 border-b border-gray-100">
-              <div className="flex items-center space-x-3">
-                <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-semibold">                  {getInitials(displayName)}
+              <div className="flex items-center space-x-3">                <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-semibold">                  {getUserInitials(displayName)}
                 </div>
                 <div>                  <div className="flex items-center space-x-1">
                     <span className="font-medium text-gray-900">{displayName}</span>

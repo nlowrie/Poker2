@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Session Invite Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 16px;
+        }
+        .button:hover { background-color: #0056b3; }
+        .error { color: #dc3545; }
+        .success { color: #28a745; }
+        .info { color: #17a2b8; }
+        input { 
+            width: 300px; 
+            padding: 8px; 
+            margin: 5px; 
+            border: 1px solid #ccc; 
+            border-radius: 4px; 
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔗 Session Invite Link Debugger</h1>
+        
+        <div class="test-section">
+            <h3>Current URL Information</h3>
+            <p><strong>Current URL:</strong> <span id="currentUrl"></span></p>
+            <p><strong>Pathname:</strong> <span id="pathname"></span></p>
+            <p><strong>Is Join URL:</strong> <span id="isJoinUrl"></span></p>
+            <p><strong>Session ID from URL:</strong> <span id="sessionIdFromUrl"></span></p>
+        </div>
+
+        <div class="test-section">
+            <h3>Test Session Invite URLs</h3>
+            <p>Try these test invite URLs:</p>
+            
+            <div>
+                <label>Test Session ID:</label>
+                <input type="text" id="testSessionId" value="test-session-123" placeholder="Enter session ID">
+                <button class="button" onclick="generateInviteUrl()">Generate Invite URL</button>
+            </div>
+            
+            <div id="generatedUrl" style="margin-top: 10px;"></div>
+            
+            <div style="margin-top: 15px;">
+                <button class="button" onclick="testUrl('http://localhost:5178/join/test-session-123')">
+                    Test: /join/test-session-123
+                </button>
+                <button class="button" onclick="testUrl('http://localhost:5178/join/abc-123-def')">
+                    Test: /join/abc-123-def
+                </button>
+                <button class="button" onclick="testUrl('http://localhost:5178/join/real-session-id')">
+                    Test: /join/real-session-id
+                </button>
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h3>Manual URL Test</h3>
+            <input type="text" id="manualUrl" placeholder="Enter full invite URL" style="width: 400px;">
+            <button class="button" onclick="testManualUrl()">Test This URL</button>
+        </div>
+
+        <div class="test-section">
+            <h3>Debug Log</h3>
+            <div id="debugLog" style="background: #f8f9fa; padding: 10px; border-radius: 4px; font-family: monospace; font-size: 14px; white-space: pre-wrap; max-height: 300px; overflow-y: auto;"></div>
+            <button class="button" onclick="clearLog()">Clear Log</button>
+        </div>
+
+        <div class="test-section">
+            <h3>Quick Actions</h3>
+            <button class="button" onclick="goToDashboard()">Go to Main Dashboard</button>
+            <button class="button" onclick="copyCurrentUrl()">Copy Current URL</button>
+            <button class="button" onclick="simulateInviteClick()">Simulate Clicking Invite Link</button>
+        </div>
+    </div>
+
+    <script>
+        function log(message) {
+            const debugLog = document.getElementById('debugLog');
+            const timestamp = new Date().toLocaleTimeString();
+            debugLog.textContent += `[${timestamp}] ${message}\n`;
+            debugLog.scrollTop = debugLog.scrollHeight;
+            console.log(message);
+        }
+
+        function updateUrlInfo() {
+            document.getElementById('currentUrl').textContent = window.location.href;
+            document.getElementById('pathname').textContent = window.location.pathname;
+            
+            const path = window.location.pathname;
+            const joinMatch = path.match(/^\/join\/(.+)$/);
+            
+            if (joinMatch) {
+                document.getElementById('isJoinUrl').textContent = 'Yes';
+                document.getElementById('isJoinUrl').className = 'success';
+                document.getElementById('sessionIdFromUrl').textContent = joinMatch[1];
+                log(`✅ Detected join URL with session ID: ${joinMatch[1]}`);
+            } else {
+                document.getElementById('isJoinUrl').textContent = 'No';
+                document.getElementById('isJoinUrl').className = 'error';
+                document.getElementById('sessionIdFromUrl').textContent = 'None';
+                log(`ℹ️ Current URL is not a join URL: ${path}`);
+            }
+        }
+
+        function generateInviteUrl() {
+            const sessionId = document.getElementById('testSessionId').value.trim();
+            if (!sessionId) {
+                alert('Please enter a session ID');
+                return;
+            }
+            
+            const inviteUrl = `${window.location.origin}/join/${sessionId}`;
+            document.getElementById('generatedUrl').innerHTML = `
+                <strong>Generated Invite URL:</strong><br>
+                <a href="${inviteUrl}" target="_blank" style="color: #007bff; word-break: break-all;">${inviteUrl}</a>
+                <button class="button" onclick="copyToClipboard('${inviteUrl}')" style="margin-left: 10px;">Copy</button>
+            `;
+            log(`Generated invite URL: ${inviteUrl}`);
+        }
+
+        function testUrl(url) {
+            log(`Testing URL: ${url}`);
+            try {
+                window.open(url, '_blank');
+                log(`✅ Opened URL in new tab: ${url}`);
+            } catch (error) {
+                log(`❌ Error opening URL: ${error.message}`);
+            }
+        }
+
+        function testManualUrl() {
+            const url = document.getElementById('manualUrl').value.trim();
+            if (!url) {
+                alert('Please enter a URL');
+                return;
+            }
+            testUrl(url);
+        }
+
+        function clearLog() {
+            document.getElementById('debugLog').textContent = '';
+        }
+
+        function goToDashboard() {
+            log('Navigating to main dashboard...');
+            window.location.href = '/';
+        }
+
+        function copyCurrentUrl() {
+            navigator.clipboard.writeText(window.location.href).then(() => {
+                log('✅ Current URL copied to clipboard');
+                alert('URL copied to clipboard!');
+            }).catch(err => {
+                log(`❌ Failed to copy URL: ${err.message}`);
+            });
+        }
+
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                log(`✅ Copied to clipboard: ${text}`);
+                alert('URL copied to clipboard!');
+            }).catch(err => {
+                log(`❌ Failed to copy: ${err.message}`);
+            });
+        }
+
+        function simulateInviteClick() {
+            const sessionId = 'debug-session-' + Date.now();
+            const inviteUrl = `${window.location.origin}/join/${sessionId}`;
+            log(`Simulating invite click with session ID: ${sessionId}`);
+            log(`Opening URL: ${inviteUrl}`);
+            window.location.href = inviteUrl;
+        }
+
+        // Initialize page
+        document.addEventListener('DOMContentLoaded', () => {
+            updateUrlInfo();
+            log('Session Invite Debugger loaded');
+            log(`Current location: ${window.location.href}`);
+            
+            // Check if we're already on a join URL
+            const path = window.location.pathname;
+            if (path.includes('/join/')) {
+                log('⚠️ You are currently on a join URL path!');
+                log('This suggests the join URL is being accessed but may not be loading properly.');
+            }
+        });
+
+        // Listen for URL changes
+        window.addEventListener('popstate', updateUrlInfo);
+    </script>
+</body>
+</html>

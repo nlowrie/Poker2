@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>System Audio Button Test Guide</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; line-height: 1.6; }
+        .step { background: #f0f8ff; padding: 15px; margin: 10px 0; border-left: 4px solid #007bff; }
+        .button-example { background: #ff8c00; color: white; padding: 8px 16px; border-radius: 50%; border: none; margin: 5px; }
+        .highlight { background: yellow; padding: 2px 4px; }
+        .console-log { background: #1e1e1e; color: #00ff00; padding: 10px; font-family: monospace; }
+    </style>
+</head>
+<body>
+    <h1>🎧 System Audio Button Access Guide</h1>
+    
+    <div class="step">
+        <h3>Step 1: Open the Application</h3>
+        <p>Navigate to <strong>http://localhost:5176</strong> in your browser.</p>
+    </div>
+    
+    <div class="step">
+        <h3>Step 2: Create/Join a Planning Session</h3>
+        <p>Click "Create Session" or join an existing session to enter the voting interface.</p>
+    </div>
+    
+    <div class="step">
+        <h3>Step 3: Start Video Call</h3>
+        <p>Look for the <span class="highlight">Video Call button</span> in the top toolbar and click it.</p>
+        <p>This will open the video interface panel on the right side of the screen.</p>
+    </div>
+    
+    <div class="step">
+        <h3>Step 4: Find the System Audio Button</h3>
+        <p>Scroll down in the video panel to find the <strong>Call Controls</strong> section.</p>
+        <p>You should see these buttons in order:</p>
+        <ul>
+            <li>🎤 Microphone (Mute/Unmute)</li>
+            <li>📹 Camera (Video On/Off)</li>
+            <li>🖥️ Screen Share</li>
+            <li>✋ Hand Raise</li>
+            <li>⭕ Recording</li>
+            <li><button class="button-example">🎧</button> <strong>System Audio (Orange when active)</strong></li>
+            <li>📞 End Call</li>
+        </ul>
+    </div>
+    
+    <div class="step">
+        <h3>Step 5: Test System Audio Capture</h3>
+        <p>1. Start playing audio (YouTube, Spotify, etc.)</p>
+        <p>2. Click the orange headphones button</p>
+        <p>3. Select "Share audio" when browser prompts</p>
+        <p>4. Button should turn orange and start capturing system audio</p>
+    </div>
+    
+    <div class="step">
+        <h3>Console Logs to Monitor</h3>
+        <div class="console-log">
+🎧 Starting system audio capture...<br>
+🎧 System audio stream started successfully<br>
+🎧 System audio MediaRecorder started<br>
+🎤 System audio transcription: [transcribed text]<br>
+✨ Enhanced transcription: [enhanced text]
+        </div>
+    </div>
+    
+    <div class="step">
+        <h3>Troubleshooting</h3>
+        <p><strong>If button not visible:</strong></p>
+        <ul>
+            <li>Make sure video call is active (video panel should be open)</li>
+            <li>Check browser console for errors</li>
+            <li>Refresh page and try again</li>
+            <li>Ensure browser permissions for microphone/camera are granted</li>
+        </ul>
+    </div>
+
+    <script>
+        // Add some interactive elements
+        console.log('🎧 System Audio Button Test Guide loaded');
+        console.log('📍 Remember: Button only appears when video call is active!');
+    </script>
+</body>
+</html>
