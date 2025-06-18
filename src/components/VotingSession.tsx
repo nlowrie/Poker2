@@ -371,19 +371,76 @@ export default function VotingSession({
               setTimeout(() => setVoteNotification(null), 3000);
             }
           }
-        })
-        .on('broadcast', { event: 'votes-revealed' }, (payload) => {
-          const { itemId, revealedBy } = payload.payload;
-          // Only update if it's for the current item and not revealed by this user
-          if (itemId === currentItem?.id && revealedBy !== user?.id) {
+        })        .on('broadcast', { event: 'votes-revealed' }, (payload) => {
+          console.log('🎯 VOTES-REVEALED BROADCAST RECEIVED:', payload);
+          
+          const { 
+            itemId, 
+            itemTitle, 
+            revealedBy, 
+            revealedByName, 
+            votes: broadcastVotes,
+            consensus, 
+            estimationType: broadcastEstimationType,
+            timestamp 
+          } = payload.payload;
+          
+          console.log('📡 RECEIVED REVEAL VOTES BROADCAST:', {
+            itemId,
+            itemTitle,
+            revealedBy,
+            revealedByName,
+            votesCount: broadcastVotes?.length || 0,
+            consensus,
+            estimationType: broadcastEstimationType,
+            timestamp,
+            currentItemId: currentItem?.id,
+            isCurrentUser: revealedBy === user?.id
+          });          // Only update if it's not revealed by this user (be more lenient about item matching)
+          const isNotOwnBroadcast = revealedBy !== user?.id;
+          const isForCurrentItem = currentItem?.id === itemId || 
+                                  sessionItems.some(item => item.id === itemId);
+          
+          // Allow broadcast if it's not our own broadcast (relaxed item matching for late state sync)
+          if (isNotOwnBroadcast) {
+            console.log('✅ Applying reveal votes broadcast');
+            
             setIsRevealed(true);
             setTimerActive(false);
-            if (currentUser.role === 'Team Member') {
-              setVoteNotification('Votes have been revealed!');
-              setTimeout(() => setVoteNotification(null), 3000);
+            
+            // Update votes if provided in broadcast (for consistency)
+            if (broadcastVotes && Array.isArray(broadcastVotes)) {
+              setVotes(broadcastVotes);
             }
+            
+            // Update estimation type if provided
+            if (broadcastEstimationType && broadcastEstimationType !== estimationType) {
+              setEstimationType(broadcastEstimationType);
+            }
+            
+            // Show notification to participants
+            const notificationMessage = revealedByName 
+              ? `${revealedByName} revealed the votes!`
+              : 'Votes have been revealed!';
+              
+            setVoteNotification(notificationMessage);
+            setTimeout(() => setVoteNotification(null), 4000);
+            
+            // Refresh votes to ensure we have the latest data
+            loadVotesForCurrentItem();          } else {
+            console.log('⏭️ Skipping reveal votes broadcast:', {
+              reason: 'own broadcast',
+              itemId,
+              currentItemId: currentItem?.id,
+              sessionItemsCount: sessionItems.length,
+              sessionItemIds: sessionItems.map(item => item.id),
+              revealedBy,
+              userId: user?.id,
+              isForCurrentItem,
+              isNotOwnBroadcast
+            });
           }
-        })        .on('broadcast', { event: 'estimation-type-changed' }, (payload) => {
+        }).on('broadcast', { event: 'estimation-type-changed' }, (payload) => {
           const { newEstimationType, changedBy, hadVotes } = payload.payload;
           // Only update if the change wasn't made by this user
           if (changedBy !== user?.id) {
@@ -970,21 +1027,81 @@ export default function VotingSession({
       setLoading(false);
     }
   };
+  const revealVotes = async () => {    console.log('🔍 REVEAL VOTES TRIGGERED:', {
+      currentItem: currentItem?.id,
+      votesCount: votes.length,
+      moderator: currentUser.role === 'Moderator',
+      channelReady: !!channel,
+      channelSubscribed: channelSubscribed,
+      userId: user?.id,
+      sessionId: sessionId
+    });
 
-  const revealVotes = () => {
     setIsRevealed(true);
-    setTimerActive(false);
+    setTimerActive(false);    // Calculate consensus for broadcasting
+    const voteValues = votes.map(v => v.points);
+    const consensus = calculateConsensus(voteValues, estimationType);
     
-    // Broadcast vote reveal to all participants
-    if (currentUser.role === 'Moderator' && channel && currentItem) {
-      channel.send({
-        type: 'broadcast',
-        event: 'votes-revealed',
-        payload: {
-          itemId: currentItem.id,
-          revealedBy: user?.id
+    // Check if there are other participants to broadcast to
+    const otherParticipants = participants.filter(p => p.id !== user?.id);
+    console.log('👥 Other participants to broadcast to:', otherParticipants.length, otherParticipants.map(p => p.name));
+      // Broadcast vote reveal to all participants with complete voting data
+    if (currentUser.role === 'Moderator' && channel && channelSubscribed && currentItem) {
+      const broadcastPayload = {
+        itemId: currentItem.id,
+        itemTitle: currentItem.title,
+        revealedBy: user?.id,
+        revealedByName: getUserDisplayName(user),
+        votes: votes,
+        consensus: consensus,
+        estimationType: estimationType,
+        timestamp: new Date().toISOString()
+      };
+
+      console.log('📡 BROADCASTING REVEAL VOTES:', broadcastPayload);      try {
+        const result = await channel.send({
+          type: 'broadcast',
+          event: 'votes-revealed',
+          payload: broadcastPayload
+        });
+        
+        console.log('✅ Reveal votes broadcast result:', result);
+        console.log('✅ Reveal votes broadcast sent successfully');
+        
+        // Verify broadcast was actually sent
+        if (result && result.status === 'ok') {
+          console.log('✅ Broadcast confirmed as sent');
+        } else {
+          console.warn('⚠️ Broadcast result uncertain:', result);
         }
+        
+        // Show confirmation to moderator
+        setVoteNotification('Votes revealed to all participants!');
+        setTimeout(() => setVoteNotification(null), 3000);
+        
+      } catch (error) {
+        console.error('❌ Failed to broadcast reveal votes:', error);
+        console.error('❌ Error details:', {
+          message: error.message,
+          stack: error.stack,
+          channelStatus: channel ? 'exists' : 'missing',
+          subscriptionStatus: channelSubscribed
+        });
+        setVoteNotification('Error revealing votes to participants');
+        setTimeout(() => setVoteNotification(null), 3000);
+      }
+    } else {      console.warn('⚠️ Cannot broadcast reveal votes:', {
+        isModerator: currentUser.role === 'Moderator',
+        hasChannel: !!channel,
+        channelSubscribed: channelSubscribed,
+        hasCurrentItem: !!currentItem,
+        userId: user?.id,
+        sessionId: sessionId
       });
+      
+      // Show error notification to moderator
+      setVoteNotification('Cannot broadcast - check connection');
+      setTimeout(() => setVoteNotification(null), 3000);
     }
   };
 
