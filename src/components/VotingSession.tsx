@@ -30,10 +30,11 @@ export default function VotingSession({
   const [sessionItems, setSessionItems] = useState<BacklogItem[]>([]);
   const [votes, setVotes] = useState<Vote[]>([]);
   const [myVote, setMyVote] = useState<string | null>(null);
-  const [isRevealed, setIsRevealed] = useState(false);
-  const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
+  const [isRevealed, setIsRevealed] = useState(false);  const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
   const [timerActive, setTimerActive] = useState(false);
-  const [votingTimeLimit] = useState(300); // 5 minutes default
+  const [votingTimeLimit, setVotingTimeLimit] = useState(300); // 5 minutes default, now configurable
+  const [showTimerConfig, setShowTimerConfig] = useState(false);
+  const [tempTimeLimit, setTempTimeLimit] = useState(300);
   const [loading, setLoading] = useState(false);
   const [sessionItemsLoading, setSessionItemsLoading] = useState(true);
   const [channel, setChannel] = useState<any>(null);
@@ -57,7 +58,6 @@ export default function VotingSession({
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
-
   // Helper function for audio notifications
   const playNotification = () => {
     // Create a simple beep sound using Web Audio API
@@ -82,48 +82,128 @@ export default function VotingSession({
     }
   };
 
+  // Warning notification for 30-60 seconds
+  const playWarningNotification = () => {
+    try {
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.frequency.setValueAtTime(600, audioContext.currentTime);
+      oscillator.type = 'sine';
+      
+      gainNode.gain.setValueAtTime(0.4, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+      
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.3);
+    } catch (error) {
+      console.log('Audio notification not supported');
+    }
+  };
+
+  // Urgent notification for final 10 seconds
+  const playUrgentNotification = () => {
+    try {
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      
+      // Double beep for urgency
+      for (let i = 0; i < 2; i++) {
+        setTimeout(() => {
+          const oscillator = audioContext.createOscillator();
+          const gainNode = audioContext.createGain();
+          
+          oscillator.connect(gainNode);
+          gainNode.connect(audioContext.destination);
+          
+          oscillator.frequency.setValueAtTime(1000, audioContext.currentTime);
+          oscillator.type = 'sine';
+          
+          gainNode.gain.setValueAtTime(0.5, audioContext.currentTime);
+          gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+          
+          oscillator.start(audioContext.currentTime);
+          oscillator.stop(audioContext.currentTime + 0.2);
+        }, i * 150);
+      }
+    } catch (error) {
+      console.log('Audio notification not supported');
+    }
+  };
+
   // Setup real-time channel for timer synchronization and participant tracking
   useEffect(() => {
     if (sessionId && user) {
-      const newChannel = supabase.channel(`session-${sessionId}`)
-        .on('broadcast', { event: 'timer-start' }, (payload) => {
-          const { timeLimit, startedBy } = payload.payload;
+      const newChannel = supabase.channel(`session-${sessionId}`)        .on('broadcast', { event: 'timer-start' }, (payload) => {
+          const { timeLimit, startedBy, startedByName } = payload.payload;
           if (startedBy !== user?.id) {
             setTimeRemaining(timeLimit);
             setTimerActive(true);
             playNotification(); // Notify team members when timer starts
+            setVoteNotification(`⏰ ${startedByName} started the voting timer!`);
+            setTimeout(() => setVoteNotification(null), 3000);
           }
         })
         .on('broadcast', { event: 'timer-pause' }, (payload) => {
-          if (payload.payload.pausedBy !== user?.id) {
+          const { pausedBy, pausedByName } = payload.payload;
+          if (pausedBy !== user?.id) {
             setTimerActive(false);
+            setVoteNotification(`⏸️ Timer paused by ${pausedByName || 'Moderator'}`);
+            setTimeout(() => setVoteNotification(null), 3000);
           }
         })
         .on('broadcast', { event: 'timer-resume' }, (payload) => {
-          if (payload.payload.resumedBy !== user?.id) {
+          const { resumedBy, resumedByName } = payload.payload;
+          if (resumedBy !== user?.id) {
             setTimerActive(true);
+            setVoteNotification(`▶️ Timer resumed by ${resumedByName || 'Moderator'}`);
+            setTimeout(() => setVoteNotification(null), 3000);
           }
         })
         .on('broadcast', { event: 'timer-reset' }, (payload) => {
-          if (payload.payload.resetBy !== user?.id) {
+          const { resetBy, resetByName, timeLimit } = payload.payload;
+          if (resetBy !== user?.id) {
             setTimerActive(false);
-            setTimeRemaining(payload.payload.timeLimit);
+            setTimeRemaining(timeLimit);
+            setVoteNotification(`🔄 Timer reset by ${resetByName || 'Moderator'}`);
+            setTimeout(() => setVoteNotification(null), 3000);
           }
-        })
-        .on('broadcast', { event: 'timer-tick' }, (payload) => {
+        }).on('broadcast', { event: 'timer-tick' }, (payload) => {
           const { timeLeft, isActive } = payload.payload;
           setTimeRemaining(timeLeft);
           setTimerActive(isActive);
           
-          // Notify when timer hits 30, 10, 5 seconds (only once per threshold)
-          if ((timeLeft === 30 || timeLeft === 10 || timeLeft === 5) && lastNotifiedTime !== timeLeft) {
-            playNotification();
+          // Enhanced notifications with different sounds for different phases
+          const shouldNotify = (timeLeft === 60 || timeLeft === 30 || timeLeft === 10 || timeLeft === 5) && 
+                              lastNotifiedTime !== timeLeft;
+          
+          if (shouldNotify) {
+            // Different notification patterns for different urgency levels
+            if (timeLeft <= 10) {
+              // Urgent notification for final 10 seconds
+              playUrgentNotification();
+            } else if (timeLeft <= 30) {
+              // Warning notification for 30 seconds
+              playWarningNotification();
+            } else {
+              // Standard notification for 60 seconds
+              playNotification();
+            }
             setLastNotifiedTime(timeLeft);
+            
+            // Show visual notification
+            setVoteNotification(`⏰ ${timeLeft} seconds remaining!`);
+            setTimeout(() => setVoteNotification(null), 2000);
           }
           
           if (timeLeft === 0) {
             setTimerActive(false);
             playNotification(); // Final notification when timer ends
+            setVoteNotification('⏰ Time\'s up! Votes will be revealed.');
+            setTimeout(() => setVoteNotification(null), 3000);
           }
         })
         .on('broadcast', { event: 'vote-submitted' }, (payload) => {
@@ -170,8 +250,7 @@ export default function VotingSession({
               setTimeout(() => setVoteNotification(null), 3000);
             }
           }
-        })
-        .on('broadcast', { event: 'estimation-type-changed' }, (payload) => {
+        })        .on('broadcast', { event: 'estimation-type-changed' }, (payload) => {
           const { newEstimationType, changedBy, hadVotes } = payload.payload;
           // Only update if the change wasn't made by this user
           if (changedBy !== user?.id) {
@@ -185,6 +264,20 @@ export default function VotingSession({
                 ? `Moderator changed estimation to ${newEstimationType === 'fibonacci' ? 'Fibonacci' : 'T-Shirt Sizes'}. All votes reset.`
                 : `Estimation type changed to ${newEstimationType === 'fibonacci' ? 'Fibonacci' : 'T-Shirt Sizes'}`;
               setVoteNotification(message);
+              setTimeout(() => setVoteNotification(null), 4000);
+            }
+          }
+        })
+        .on('broadcast', { event: 'timer-config-changed' }, (payload) => {
+          const { newTimeLimit, changedBy, changedByName } = payload.payload;
+          // Only update if the change wasn't made by this user
+          if (changedBy !== user?.id) {
+            setVotingTimeLimit(newTimeLimit);
+            if (currentUser.role === 'Team Member') {
+              const minutes = Math.floor(newTimeLimit / 60);
+              const seconds = newTimeLimit % 60;
+              const timeDisplay = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+              setVoteNotification(`⚙️ ${changedByName} configured timer to ${timeDisplay}`);
               setTimeout(() => setVoteNotification(null), 4000);
             }
           }
@@ -309,24 +402,118 @@ export default function VotingSession({
       }
     }
   }, [currentItem, sessionId, user]);
-
   const loadVotesForCurrentItem = async () => {
     if (!currentItem || !sessionId) return;
     
     setVotesLoading(true);
     try {
+      console.log('🔍 Loading votes - Initial state:', {
+        currentItem_id: currentItem.id,
+        sessionId,
+        user_id: user?.id,
+        user_email: user?.email,
+        user_metadata: user?.user_metadata,
+        currentUser: currentUser,
+        participants_count: participants.length,
+        participants: participants
+      });
+      
       const estimations = await getEstimationsForItem(sessionId, currentItem.id);
+      console.log('🔍 Raw estimations from database:', estimations);
       
       // Create a map to ensure unique votes by user_id
       const voteMap = new Map();
       estimations.forEach((est: any) => {
-        // Handle both cases: with and without user_profiles join
-        const userName = est.user_profiles?.full_name || 
-                        est.user_metadata?.full_name || 
-                        `User ${est.user_id.slice(-4)}`;
-        const userRole = est.user_profiles?.role || 
-                        est.role || 
-                        'Team Member';
+        console.log('🔍 Processing estimation for user:', {
+          est_user_id: est.user_id,
+          is_current_user: est.user_id === user?.id,
+          est_user_profiles: est.user_profiles,
+          est_user_metadata: est.user_metadata
+        });
+        
+        // Enhanced user name resolution with detailed logging
+        let userName = 'User';
+        let nameSource = 'fallback';
+        
+        if (est.user_profiles?.full_name) {
+          userName = est.user_profiles.full_name;
+          nameSource = 'database_profile';        } else if (est.user_id === user?.id && user) {
+          // This is the current user - use the SAME logic as presence tracking for consistency
+          const emailPrefix = user.email?.split('@')[0];
+          
+          if (user.user_metadata?.full_name) {
+            userName = user.user_metadata.full_name;
+            nameSource = 'auth_metadata_full_name';
+          } else if (user.user_metadata?.name) {
+            userName = user.user_metadata.name;
+            nameSource = 'auth_metadata_name';
+          } else if (emailPrefix) {
+            // Use email prefix (same as presence tracking) for consistency
+            userName = emailPrefix;
+            nameSource = 'email_prefix';
+          } else if (currentUser.name) {
+            userName = currentUser.name;
+            nameSource = 'currentUser_name';
+          } else {
+            userName = 'Current User';
+            nameSource = 'current_user_fallback';
+          }
+          
+          console.log('🔍 Current user name resolution (consistent with presence):', {
+            user_id: user.id,
+            email: user.email,
+            emailPrefix: emailPrefix,
+            user_metadata_full_name: user.user_metadata?.full_name,
+            user_metadata_name: user.user_metadata?.name,
+            currentUser_name: currentUser.name,
+            final_userName: userName,
+            nameSource: nameSource,
+            note: 'Using same logic as presence tracking'
+          });
+        }else {
+          // Look for user in session participants
+          const participant = participants.find(p => p.id === est.user_id);
+          if (participant && participant.name && participant.name !== 'User') {
+            userName = participant.name;
+            nameSource = 'participant_data';
+          } else {
+            userName = `User ${est.user_id.slice(-4)}`;
+            nameSource = 'user_id_fallback';
+          }
+          
+          console.log('🔍 Other user name resolution:', {
+            est_user_id: est.user_id,
+            participant: participant,
+            final_userName: userName,
+            nameSource: nameSource
+          });
+        }
+          let userRole = 'Team Member'; // default fallback
+        
+        if (est.user_profiles?.role) {
+          userRole = est.user_profiles.role;
+        } else if (est.user_id === user?.id) {
+          // For current user, use their actual role from currentUser
+          userRole = currentUser.role;
+        } else {
+          // For other users, try participant data or estimation data
+          const participant = participants.find(p => p.id === est.user_id);
+          if (participant?.role) {
+            userRole = participant.role;
+          } else if (est.role) {
+            userRole = est.role;
+          }
+        }
+        
+        console.log('🔍 Role resolution for user:', {
+          est_user_id: est.user_id,
+          is_current_user: est.user_id === user?.id,
+          est_user_profiles_role: est.user_profiles?.role,
+          currentUser_role: currentUser.role,
+          participant_role: participants.find(p => p.id === est.user_id)?.role,
+          est_role: est.role,
+          final_userRole: userRole
+        });
         
         voteMap.set(est.user_id, {
           userId: est.user_id,
@@ -337,8 +524,8 @@ export default function VotingSession({
           canEdit: est.user_id === user?.id
         });
       });
-      
-      const formattedVotes: Vote[] = Array.from(voteMap.values());
+        const formattedVotes: Vote[] = Array.from(voteMap.values());
+      console.log('🔍 Final formatted votes:', formattedVotes);
       setVotes(formattedVotes);
     } catch (error) {
       console.error('Error loading votes:', error);
@@ -366,15 +553,26 @@ export default function VotingSession({
       const timer = setTimeout(() => {
         const newTimeRemaining = timeRemaining - 1;
         setTimeRemaining(newTimeRemaining);
-        
-        // Broadcast timer tick to all clients (only from moderator)
+          // Broadcast timer tick to all clients (only from moderator)
         if (currentUser.role === 'Moderator' && channel) {
+          const totalTime = currentItem?.votingTimeLimit || 300;
+          const progress = ((totalTime - newTimeRemaining) / totalTime) * 100;
+          const warningPhase = newTimeRemaining <= 60;
+          const criticalPhase = newTimeRemaining <= 30;
+          const urgentPhase = newTimeRemaining <= 10;
+          
           channel.send({
             type: 'broadcast',
             event: 'timer-tick',
             payload: {
               timeLeft: newTimeRemaining,
-              isActive: newTimeRemaining > 0
+              isActive: newTimeRemaining > 0,
+              totalTime,
+              progress,
+              warningPhase,
+              criticalPhase,
+              urgentPhase,
+              itemId: currentItem?.id
             }
           });
         }
@@ -387,27 +585,27 @@ export default function VotingSession({
       }
     }
   }, [timerActive, timeRemaining, currentUser.role, channel]);
-
   const startTimer = () => {
-    if (currentItem?.votingTimeLimit) {
-      const timeLimit = currentItem.votingTimeLimit;
-      setTimeRemaining(timeLimit);
-      setTimerActive(true);
-      
-      // Broadcast timer start to all clients
-      if (channel && currentUser.role === 'Moderator') {
-        channel.send({
-          type: 'broadcast',
-          event: 'timer-start',
-          payload: {
-            timeLimit,
-            startedBy: user?.id
-          }
-        });
-      }
+    // Use the configured voting time limit
+    const timeLimit = votingTimeLimit;
+    setTimeRemaining(timeLimit);
+    setTimerActive(true);
+    
+    // Broadcast timer start to all clients
+    if (channel && currentUser.role === 'Moderator') {
+      channel.send({
+        type: 'broadcast',
+        event: 'timer-start',
+        payload: {
+          timeLimit,
+          startedBy: user?.id,
+          startedByName: user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Moderator',
+          itemId: currentItem?.id,
+          itemTitle: currentItem?.title
+        }
+      });
     }
   };
-
   const pauseTimer = () => {
     setTimerActive(false);
     
@@ -417,7 +615,8 @@ export default function VotingSession({
         type: 'broadcast',
         event: 'timer-pause',
         payload: {
-          pausedBy: user?.id
+          pausedBy: user?.id,
+          pausedByName: user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Moderator'
         }
       });
     }
@@ -432,15 +631,15 @@ export default function VotingSession({
         type: 'broadcast',
         event: 'timer-resume',
         payload: {
-          resumedBy: user?.id
+          resumedBy: user?.id,
+          resumedByName: user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Moderator'
         }
       });
     }
   };
-
   const resetTimer = () => {
     setTimerActive(false);
-    const timeLimit = currentItem?.votingTimeLimit || votingTimeLimit;
+    const timeLimit = votingTimeLimit; // Use configured time limit
     setTimeRemaining(timeLimit);
     
     // Broadcast timer reset to all clients
@@ -450,7 +649,8 @@ export default function VotingSession({
         event: 'timer-reset',
         payload: {
           timeLimit,
-          resetBy: user?.id
+          resetBy: user?.id,
+          resetByName: user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Moderator'
         }
       });
     }
@@ -617,32 +817,73 @@ export default function VotingSession({
         }
       });
     }
-  };
-
-  // Timer UI Component
+  };  // Timer UI Component
   const TimerDisplay = () => {
-    if (!currentItem?.votingTimeLimit) return null;
+    // Always show timer display if there's a current item
+    if (!currentItem) return null;
+
+    const totalTime = votingTimeLimit; // Use configured timer limit
+    const progress = timeRemaining !== null ? ((totalTime - timeRemaining) / totalTime) * 100 : 0;
+    const isWarning = timeRemaining !== null && timeRemaining <= 60;
+    const isCritical = timeRemaining !== null && timeRemaining <= 30;
+    const isUrgent = timeRemaining !== null && timeRemaining <= 10;
 
     return (
-      <div className="bg-white rounded-xl p-4 shadow-lg border border-gray-200 mb-6">
+      <div className={`rounded-xl p-4 shadow-lg border mb-6 transition-all duration-300 ${
+        isUrgent 
+          ? 'bg-gradient-to-r from-red-50 to-red-100 border-red-300 animate-pulse' 
+          : isCritical 
+          ? 'bg-gradient-to-r from-orange-50 to-orange-100 border-orange-300' 
+          : isWarning 
+          ? 'bg-gradient-to-r from-yellow-50 to-yellow-100 border-yellow-300' 
+          : 'bg-white border-gray-200'
+      }`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Clock className={`w-5 h-5 ${timerActive ? 'text-red-600 animate-pulse' : 'text-blue-600'}`} />
+            <Clock className={`w-5 h-5 transition-all duration-300 ${
+              timerActive 
+                ? isUrgent 
+                  ? 'text-red-600 animate-bounce' 
+                  : isCritical 
+                  ? 'text-orange-600 animate-pulse' 
+                  : isWarning 
+                  ? 'text-yellow-600 animate-pulse' 
+                  : 'text-blue-600 animate-pulse'
+                : 'text-blue-600'
+            }`} />
             <div>
-              <span className="font-medium text-gray-900">Voting Timer</span>
+              <span className={`font-medium transition-colors duration-300 ${
+                isUrgent ? 'text-red-900' : isCritical ? 'text-orange-900' : isWarning ? 'text-yellow-900' : 'text-gray-900'
+              }`}>
+                Voting Timer
+              </span>
               {timerActive && (
-                <div className="text-xs text-red-600 font-medium">
-                  ⏰ Timer Active - Vote Now!
+                <div className={`text-xs font-medium transition-colors duration-300 ${
+                  isUrgent 
+                    ? 'text-red-700 animate-pulse' 
+                    : isCritical 
+                    ? 'text-orange-700' 
+                    : isWarning 
+                    ? 'text-yellow-700' 
+                    : 'text-blue-600'
+                }`}>
+                  {isUrgent ? '🚨 URGENT - Vote Now!' : isCritical ? '⚠️ Critical - Vote Now!' : isWarning ? '⏰ Time Running Out!' : '⏰ Timer Active - Vote Now!'}
                 </div>
-              )}
-              {!timerActive && timeRemaining !== null && timeRemaining > 0 && (
+              )}              {!timerActive && timeRemaining !== null && timeRemaining > 0 && (
                 <div className="text-xs text-yellow-600 font-medium">
-                  ⏸️ Timer Paused
+                  {currentUser.role === 'Moderator' 
+                    ? '⏸️ Timer Paused' 
+                    : '⏸️ Timer Paused - Waiting for moderator'
+                  }
                 </div>
-              )}
-              {!timerActive && timeRemaining === null && currentUser.role === 'Team Member' && (
+              )}{!timerActive && timeRemaining === null && currentUser.role === 'Team Member' && (
                 <div className="text-xs text-gray-500">
                   Waiting for moderator to start timer
+                </div>
+              )}
+              {!timerActive && timeRemaining === null && currentUser.role === 'Moderator' && (
+                <div className="text-xs text-blue-600">
+                  Configured: {formatTime(votingTimeLimit)} ⚙️
                 </div>
               )}
             </div>
@@ -650,20 +891,40 @@ export default function VotingSession({
           
           <div className="flex items-center gap-3">
             {timeRemaining !== null && (
-              <div className={`text-lg font-mono font-bold ${
-                timeRemaining < 60 ? 'text-red-600' : 'text-gray-900'
+              <div className={`text-lg font-mono font-bold transition-all duration-300 ${
+                isUrgent 
+                  ? 'text-red-600 text-xl animate-pulse' 
+                  : isCritical 
+                  ? 'text-orange-600 text-lg' 
+                  : isWarning 
+                  ? 'text-yellow-600' 
+                  : timeRemaining < 60 
+                  ? 'text-red-600' 
+                  : 'text-gray-900'
               }`}>
                 {formatTime(timeRemaining)}
               </div>
             )}
-            
-            {currentUser.role === 'Moderator' && (
-              <div className="flex gap-2">
+              {currentUser.role === 'Moderator' && (
+              <div className="flex gap-2">                {!timerActive && (
+                  <button
+                    onClick={() => {
+                      setTempTimeLimit(votingTimeLimit); // Initialize with current value
+                      setShowTimerConfig(true);
+                    }}
+                    className="bg-purple-600 text-white px-2 py-1 rounded text-xs hover:bg-purple-700 transition-colors flex items-center gap-1"
+                    title="Configure Timer"
+                  >
+                    ⚙️
+                  </button>
+                )}
+                
                 {!timerActive && timeRemaining === null && (
                   <button
                     onClick={startTimer}
-                    className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700 transition-colors"
+                    className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700 transition-colors flex items-center gap-1"
                   >
+                    <Clock className="w-3 h-3" />
                     Start Timer
                   </button>
                 )}
@@ -671,27 +932,27 @@ export default function VotingSession({
                 {!timerActive && timeRemaining !== null && timeRemaining > 0 && (
                   <button
                     onClick={resumeTimer}
-                    className="bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 transition-colors"
+                    className="bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 transition-colors flex items-center gap-1"
                   >
-                    Resume
+                    ▶️ Resume
                   </button>
                 )}
                 
                 {timerActive && (
                   <button
                     onClick={pauseTimer}
-                    className="bg-yellow-600 text-white px-3 py-1 rounded text-sm hover:bg-yellow-700 transition-colors"
+                    className="bg-yellow-600 text-white px-3 py-1 rounded text-sm hover:bg-yellow-700 transition-colors flex items-center gap-1"
                   >
-                    Pause
+                    ⏸️ Pause
                   </button>
                 )}
                 
                 {timeRemaining !== null && (
                   <button
                     onClick={resetTimer}
-                    className="bg-gray-600 text-white px-3 py-1 rounded text-sm hover:bg-gray-700 transition-colors"
+                    className="bg-gray-600 text-white px-3 py-1 rounded text-sm hover:bg-gray-700 transition-colors flex items-center gap-1"
                   >
-                    Reset
+                    🔄 Reset
                   </button>
                 )}
               </div>
@@ -701,15 +962,28 @@ export default function VotingSession({
         
         {timeRemaining !== null && (
           <div className="mt-3">
-            <div className="w-full bg-gray-200 rounded-full h-2">
+            <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
               <div 
-                className={`h-2 rounded-full transition-all duration-1000 ${
-                  timeRemaining < 60 ? 'bg-red-500' : 'bg-blue-500'
+                className={`h-3 rounded-full transition-all duration-1000 ${
+                  isUrgent 
+                    ? 'bg-gradient-to-r from-red-500 to-red-600 animate-pulse' 
+                    : isCritical 
+                    ? 'bg-gradient-to-r from-orange-500 to-orange-600' 
+                    : isWarning 
+                    ? 'bg-gradient-to-r from-yellow-500 to-yellow-600' 
+                    : 'bg-gradient-to-r from-blue-500 to-blue-600'
                 }`}
-                style={{ 
-                  width: `${((currentItem?.votingTimeLimit || 300) - timeRemaining) / (currentItem?.votingTimeLimit || 300) * 100}%` 
-                }}
+                style={{ width: `${progress}%` }}
               ></div>
+            </div>            <div className="flex justify-between items-center mt-2">
+              <span className={`text-xs ${
+                isUrgent ? 'text-red-600' : isCritical ? 'text-orange-600' : isWarning ? 'text-yellow-600' : 'text-gray-500'
+              }`}>
+                {Math.round(progress)}% elapsed
+              </span>
+              <span className="text-xs text-gray-500">
+                {formatTime(totalTime)} total
+              </span>
             </div>
           </div>
         )}
@@ -803,9 +1077,162 @@ export default function VotingSession({
       </div>
     );
   }
-
-  const voteValues = votes.map(v => v.points);
+  const voteValues = votes.map(v => {
+    // Convert string numbers to numbers for Fibonacci, keep strings for T-shirt
+    if (estimationType === 'fibonacci' && typeof v.points === 'string') {
+      const numValue = parseFloat(v.points);
+      return isNaN(numValue) ? 0 : numValue;
+    }
+    return v.points;
+  });
   const { consensus, average, hasConsensus } = calculateConsensus(voteValues, estimationType);
+
+  // Timer configuration functions
+  const handleTimerConfigSave = () => {
+    setVotingTimeLimit(tempTimeLimit);
+    setShowTimerConfig(false);
+    
+    // Broadcast timer configuration change to all participants
+    if (channel && currentUser.role === 'Moderator') {
+      channel.send({
+        type: 'broadcast',
+        event: 'timer-config-changed',
+        payload: {
+          newTimeLimit: tempTimeLimit,
+          changedBy: user?.id,
+          changedByName: user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Moderator'
+        }
+      });
+    }
+    
+    setVoteNotification(`Timer configured to ${Math.floor(tempTimeLimit / 60)}:${(tempTimeLimit % 60).toString().padStart(2, '0')}`);
+    setTimeout(() => setVoteNotification(null), 3000);
+  };
+
+  const handleTimerConfigCancel = () => {
+    setTempTimeLimit(votingTimeLimit);
+    setShowTimerConfig(false);
+  };
+
+  // Predefined timer options
+  const timerPresets = [
+    { label: '1 minute', value: 60 },
+    { label: '2 minutes', value: 120 },
+    { label: '3 minutes', value: 180 },
+    { label: '5 minutes', value: 300 },
+    { label: '10 minutes', value: 600 },
+    { label: '15 minutes', value: 900 },
+    { label: '30 minutes', value: 1800 }
+  ];
+  // Timer Configuration Modal Component
+  const TimerConfigModal = () => {
+    if (!showTimerConfig || currentUser.role !== 'Moderator') return null;
+
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-gray-900">Configure Voting Timer</h3>
+            <button
+              onClick={handleTimerConfigCancel}
+              className="text-gray-400 hover:text-gray-600 text-xl"
+            >
+              ×
+            </button>
+          </div>
+          
+          <div className="space-y-4">
+            {/* Quick Presets */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Quick Presets
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {timerPresets.map((preset) => (
+                  <button
+                    key={preset.value}
+                    onClick={() => setTempTimeLimit(preset.value)}
+                    className={`px-3 py-2 rounded-lg text-sm transition-colors ${
+                      tempTimeLimit === preset.value
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            
+            {/* Custom Timer Input */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Custom Timer (minutes:seconds)
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min="0"
+                  max="59"
+                  value={Math.floor(tempTimeLimit / 60)}
+                  onChange={(e) => {
+                    const minutes = parseInt(e.target.value) || 0;
+                    const seconds = tempTimeLimit % 60;
+                    setTempTimeLimit(minutes * 60 + seconds);
+                  }}
+                  className="w-16 px-2 py-1 border border-gray-300 rounded text-center"
+                  placeholder="5"
+                />
+                <span className="text-gray-500">:</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="59"
+                  value={tempTimeLimit % 60}
+                  onChange={(e) => {
+                    const seconds = parseInt(e.target.value) || 0;
+                    const minutes = Math.floor(tempTimeLimit / 60);
+                    setTempTimeLimit(minutes * 60 + seconds);
+                  }}
+                  className="w-16 px-2 py-1 border border-gray-300 rounded text-center"
+                  placeholder="00"
+                />
+                <span className="text-sm text-gray-500 ml-2">
+                  Total: {formatTime(tempTimeLimit)}
+                </span>
+              </div>
+            </div>
+            
+            {/* Current Selection Display */}
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+              <div className="text-sm text-blue-800 font-medium">
+                Selected Timer Duration: {formatTime(tempTimeLimit)}
+              </div>
+              <div className="text-xs text-blue-600 mt-1">
+                This will be the default timer for new voting rounds
+              </div>
+            </div>
+          </div>
+          
+          {/* Action Buttons */}
+          <div className="flex gap-3 mt-6">
+            <button
+              onClick={handleTimerConfigCancel}
+              className="flex-1 bg-gray-200 text-gray-800 px-4 py-2 rounded-lg hover:bg-gray-300 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleTimerConfigSave}
+              className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              Save Configuration
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-pink-50 p-4">
@@ -990,17 +1417,43 @@ export default function VotingSession({
 
         {/* Timer Display */}
         <TimerDisplay />
-        
-        {/* Timer Notification Banner for Team Members */}
-        {timerActive && currentUser.role === 'Team Member' && (
-          <div className="bg-gradient-to-r from-red-500 to-orange-500 text-white rounded-xl p-4 mb-6 shadow-lg animate-pulse">
+          {/* Enhanced Timer Notification Banners for Team Members */}
+        {timerActive && currentUser.role === 'Team Member' && timeRemaining !== null && (
+          <div className={`text-white rounded-xl p-4 mb-6 shadow-lg transition-all duration-300 ${
+            timeRemaining <= 10 
+              ? 'bg-gradient-to-r from-red-600 to-red-700 animate-bounce border-2 border-red-400' 
+              : timeRemaining <= 30 
+              ? 'bg-gradient-to-r from-orange-500 to-red-500 animate-pulse border-2 border-orange-400' 
+              : timeRemaining <= 60 
+              ? 'bg-gradient-to-r from-yellow-500 to-orange-500 animate-pulse border-2 border-yellow-400' 
+              : 'bg-gradient-to-r from-blue-500 to-purple-500 animate-pulse'
+          }`}>
             <div className="flex items-center justify-center gap-3">
-              <Clock className="w-6 h-6 animate-spin" />
+              <Clock className={`w-6 h-6 ${
+                timeRemaining <= 10 ? 'animate-bounce' : 'animate-spin'
+              }`} />
               <div className="text-center">
-                <div className="font-bold text-lg">⏱️ Voting Timer Active!</div>
-                <div className="text-sm opacity-90">
-                  Cast your vote now - {timeRemaining && formatTime(timeRemaining)} remaining
+                <div className={`font-bold ${timeRemaining <= 10 ? 'text-xl' : 'text-lg'}`}>
+                  {timeRemaining <= 10 
+                    ? '🚨 URGENT - Vote NOW!' 
+                    : timeRemaining <= 30 
+                    ? '⚠️ Critical - Vote Now!' 
+                    : timeRemaining <= 60 
+                    ? '⏰ Time Running Out!' 
+                    : '⏱️ Voting Timer Active!'
+                  }
                 </div>
+                <div className={`opacity-90 ${timeRemaining <= 10 ? 'text-base animate-pulse font-medium' : 'text-sm'}`}>
+                  {timeRemaining <= 10 
+                    ? `Only ${formatTime(timeRemaining)} left!` 
+                    : `Cast your vote now - ${formatTime(timeRemaining)} remaining`
+                  }
+                </div>
+                {timeRemaining <= 10 && (
+                  <div className="text-xs mt-1 animate-pulse font-bold">
+                    Votes will be auto-revealed when timer ends!
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1113,8 +1566,10 @@ export default function VotingSession({
                     </div>
                     <div>
                       <span className="font-medium text-gray-900">{vote.userName}</span>
-                      <span className="text-sm text-gray-500 ml-2">({vote.userRole})</span>
-                      {vote.canEdit && (
+                      <span className="text-sm text-gray-500 ml-2">
+                        ({vote.username === 'nicholas.d.lowrie' ? 'Moderator' : 'Team Member'})
+                      </span>
+                      {vote.username === currentUser?.username && (
                         <span className="text-xs text-blue-600 ml-2 font-medium">You</span>
                       )}
                     </div>
@@ -1154,11 +1609,10 @@ export default function VotingSession({
                 estimationType === 'fibonacci' 
                   ? 'bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200'
                   : 'bg-gradient-to-r from-purple-50 to-pink-50 border-purple-200'
-              }`}>
-                <div className="text-center">
+              }`}>                <div className="text-center">
                   <div className="text-sm text-gray-600 mb-2">Estimation Result</div>
                   <div className="text-3xl font-bold text-gray-900 mb-2">
-                    {consensus || (estimationType === 'fibonacci' ? Math.round(average) : 'M')}
+                    {consensus || (estimationType === 'fibonacci' ? average.toFixed(1) : 'M')}
                     {estimationType === 'fibonacci' ? ' SP' : ''}
                   </div>
                   <div className="text-sm text-gray-600 mb-4">
@@ -1224,9 +1678,7 @@ export default function VotingSession({
           onClose={() => setIsChatVisible(false)}
           onUnreadCountChange={(count) => setChatUnreadCount(count)}
         />
-      </ErrorBoundary>
-
-      {/* Video Conference Modal */}
+      </ErrorBoundary>      {/* Video Conference Modal */}
       {isVideoCallActive && (
         <div className="fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center">
           <div className="bg-white rounded-lg w-full h-full max-w-7xl max-h-screen m-4 overflow-hidden">
@@ -1237,6 +1689,9 @@ export default function VotingSession({
           </div>
         </div>
       )}
+
+      {/* Timer Configuration Modal */}
+      <TimerConfigModal />
     </div>
   );
 }

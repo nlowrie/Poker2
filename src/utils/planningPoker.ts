@@ -41,7 +41,14 @@ export function calculateConsensus(votes: (number | string)[], estimationType: '
       typeof vote === 'string' ? TSHIRT_VALUES[vote] || 0 : vote as number
     );
   } else {
-    numericVotes = votes.map(vote => typeof vote === 'number' ? vote : 0);
+    numericVotes = votes.map(vote => {
+      if (typeof vote === 'number') return vote;
+      if (typeof vote === 'string') {
+        const numValue = parseFloat(vote);
+        return isNaN(numValue) ? 0 : numValue;
+      }
+      return 0;
+    });
   }
 
   const average = numericVotes.reduce((sum, vote) => sum + vote, 0) / numericVotes.length;
