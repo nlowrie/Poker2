@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { BacklogItem, User, Vote } from '../types';
 import { Eye, EyeOff, SkipForward, CheckCircle, ArrowLeft, Users, Clock, Settings, MessageCircle, FileText, Video } from 'lucide-react';
 import VotingCards from './VotingCards';
@@ -8,6 +8,7 @@ import VideoConference from './VideoConference';
 import ErrorBoundary from './ErrorBoundary';
 import { calculateConsensus } from '../utils/planningPoker';
 import { submitEstimation, getEstimationsForItem, getUserVote, getSessionItems, getAllBacklogItems } from '../utils/planningSession';
+import { getUserDisplayName, getUserInitials, getUserInfoById } from '../utils/userUtils';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../supabaseClient';
 
@@ -38,6 +39,7 @@ export default function VotingSession({
   const [loading, setLoading] = useState(false);
   const [sessionItemsLoading, setSessionItemsLoading] = useState(true);
   const [channel, setChannel] = useState<any>(null);
+  const [channelSubscribed, setChannelSubscribed] = useState(false);
   const [lastNotifiedTime, setLastNotifiedTime] = useState<number | null>(null);
   const [votesLoading, setVotesLoading] = useState(false);
   const [voteNotification, setVoteNotification] = useState<string | null>(null);
@@ -51,6 +53,19 @@ export default function VotingSession({
   const [isChatVisible, setIsChatVisible] = useState(true);
   const [chatUnreadCount, setChatUnreadCount] = useState(0);
   const [isVideoCallActive, setIsVideoCallActive] = useState(false);
+
+  // Refs to access current state in broadcast handlers
+  const sessionItemsRef = useRef(sessionItems);
+  const currentItemIndexRef = useRef(currentItemIndex);
+  
+  // Update refs when state changes
+  useEffect(() => {
+    sessionItemsRef.current = sessionItems;
+  }, [sessionItems]);
+  
+  useEffect(() => {
+    currentItemIndexRef.current = currentItemIndex;
+  }, [currentItemIndex]);
 
   // Helper function to format time
   const formatTime = (seconds: number) => {
@@ -205,25 +220,144 @@ export default function VotingSession({
             setVoteNotification('⏰ Time\'s up! Votes will be revealed.');
             setTimeout(() => setVoteNotification(null), 3000);
           }
-        })
-        .on('broadcast', { event: 'vote-submitted' }, (payload) => {
+        })        .on('broadcast', { event: 'vote-submitted' }, (payload) => {
+          console.log('📥 Received vote-submitted broadcast:', payload);
           const { itemId, voterId, voterName } = payload.payload;
-          // Only refresh votes if it's for the current item and not our own vote
-          if (itemId === currentItem?.id && voterId !== user?.id) {
-            loadVotesForCurrentItem();
+          
+          // Get current item from refs to avoid stale closure
+          const currentSessionItems = sessionItemsRef.current;
+          const currentItemIndexValue = currentItemIndexRef.current;
+          const currentActiveItem = currentSessionItems[currentItemIndexValue];
+          
+          console.log('🔍 Processing vote-submitted broadcast:', {
+            itemId_from_broadcast: itemId,
+            current_item_id: currentActiveItem?.id,
+            current_item_index: currentItemIndexValue,
+            session_items_length: currentSessionItems.length,
+            voter_id: voterId,
+            current_user_id: user?.id
+          });
+          
+          if (!currentActiveItem) {
+            console.log('🚫 No current item set, cannot process vote broadcast', {
+              sessionItems_length: currentSessionItems.length,
+              currentItemIndex: currentItemIndexValue,
+              itemId_from_broadcast: itemId
+            });
+            return;
+          }          if (itemId === currentActiveItem.id && voterId !== user?.id) {
+            console.log('🔄 Refreshing votes due to broadcast from:', voterName);
+            console.log('🔍 CROSS-USER VOTE DEBUG:', {
+              broadcast_from_user: voterName,
+              broadcast_from_user_id: voterId,
+              current_user_id: user?.id,
+              current_user_email: user?.email,
+              current_item_id: currentActiveItem.id,
+              broadcast_item_id: itemId,
+              will_reload_votes: true,
+              current_votes_before_reload: votes.length
+            });            // Load votes and add extra logging
+            // Add a small delay to ensure database consistency before querying
+            setTimeout(() => {
+              console.log('🔍 CROSS-USER: About to load votes for item after delay:', currentActiveItem.id);
+              loadVotesForCurrentItem().then(() => {
+                console.log('✅ CROSS-USER VOTE: Vote refresh completed');
+                // We can't access the votes state directly here due to closure issues
+                // The vote state will be updated by the loadVotesForCurrentItem function
+                setTimeout(() => {
+                  console.log('🔍 VOTE STATE AFTER REFRESH: Vote loading completed, UI should be updated');
+                  // Force a re-check of votes from DOM
+                  const voteElements = document.querySelectorAll('.space-y-3 .flex.items-center.justify-between.p-3');
+                  console.log('🔍 DOM CHECK: Found', voteElements.length, 'vote elements in UI');
+                  
+                  // If no votes found in DOM but we should have some, trigger another refresh
+                  if (voteElements.length === 0) {
+                    console.log('⚠️ No votes in DOM, triggering additional refresh in 1 second...');
+                    setTimeout(() => {
+                      loadVotesForCurrentItem().then(() => {
+                        console.log('✅ ADDITIONAL REFRESH: Completed');
+                      }).catch((error) => {
+                        console.error('❌ ADDITIONAL REFRESH: Failed:', error);
+                      });
+                    }, 1000);
+                  }
+                }, 200);
+              }).catch((error) => {
+                console.error('❌ CROSS-USER VOTE: Vote refresh failed:', error);
+              });
+            }, 150); // Small delay before querying database
+            
             // Show notification
             setVoteNotification(`${voterName} submitted a vote`);
             setTimeout(() => setVoteNotification(null), 3000);
+          } else {
+            const reason = itemId !== currentActiveItem.id ? 'different item' : 'own vote';
+            console.log(`🚫 Ignoring broadcast (${reason}):`, { 
+              currentItemId: currentActiveItem.id,
+              broadcastItemId: itemId,
+              isOwnVote: voterId === user?.id,
+              current_user_id: user?.id,
+              broadcast_voter_id: voterId
+            });
           }
         })
         .on('broadcast', { event: 'vote-changed' }, (payload) => {
+          console.log('📥 Received vote-changed broadcast:', payload);
           const { itemId, voterId, voterName } = payload.payload;
-          // Only refresh votes if it's for the current item and not our own vote
-          if (itemId === currentItem?.id && voterId !== user?.id) {
-            loadVotesForCurrentItem();
+          
+          // Get current item from refs to avoid stale closure
+          const currentSessionItems = sessionItemsRef.current;
+          const currentItemIndexValue = currentItemIndexRef.current;
+          const currentActiveItem = currentSessionItems[currentItemIndexValue];
+          
+          console.log('🔍 Processing vote-changed broadcast:', {
+            itemId_from_broadcast: itemId,
+            current_item_id: currentActiveItem?.id,
+            current_item_index: currentItemIndexValue,
+            session_items_length: currentSessionItems.length,
+            voter_id: voterId,
+            current_user_id: user?.id
+          });
+          
+          if (!currentActiveItem) {
+            console.log('🚫 No current item set, cannot process vote-changed broadcast', {
+              sessionItems_length: currentSessionItems.length,
+              currentItemIndex: currentItemIndexValue,
+              itemId_from_broadcast: itemId
+            });
+            return;
+          }
+            if (itemId === currentActiveItem.id && voterId !== user?.id) {
+            console.log('🔄 Refreshing votes due to vote change from:', voterName);
+            console.log('🔍 CROSS-USER VOTE CHANGE DEBUG:', {
+              broadcast_from_user: voterName,
+              broadcast_from_user_id: voterId,
+              current_user_id: user?.id,
+              current_user_email: user?.email,
+              current_item_id: currentActiveItem.id,
+              broadcast_item_id: itemId,
+              will_reload_votes: true
+            });
+            
+            // Load votes and add extra logging
+            loadVotesForCurrentItem().then(() => {
+              console.log('✅ CROSS-USER VOTE CHANGE: Vote refresh completed');
+            }).catch((error) => {
+              console.error('❌ CROSS-USER VOTE CHANGE: Vote refresh failed:', error);
+            });
+            
             // Show notification
             setVoteNotification(`${voterName} changed their vote`);
             setTimeout(() => setVoteNotification(null), 3000);
+          } else {
+            const reason = itemId !== currentActiveItem.id ? 'different item' : 'own vote';
+            console.log(`🚫 Ignoring vote-changed broadcast (${reason}):`, { 
+              currentItemId: currentActiveItem.id,
+              broadcastItemId: itemId,
+              isOwnVote: voterId === user?.id,
+              current_user_id: user?.id,
+              broadcast_voter_id: voterId
+            });
           }
         })
         .on('broadcast', { event: 'item-changed' }, (payload) => {
@@ -313,10 +447,11 @@ export default function VotingSession({
           if (leftUsers) {
             setVoteNotification(`${leftUsers} left the session`);
             setTimeout(() => setVoteNotification(null), 3000);
-          }
-        })
-        .subscribe(async (status) => {
+          }        })        .subscribe(async (status) => {
+          console.log('📡 Channel subscription status:', status);
           if (status === 'SUBSCRIBED') {
+            console.log('✅ Successfully subscribed to channel');
+            setChannelSubscribed(true);
             // Track this user's presence in the session
             await newChannel.track({
               user_id: user.id,
@@ -324,16 +459,22 @@ export default function VotingSession({
               user_role: currentUser.role,
               joined_at: new Date().toISOString()
             });
+          } else if (status === 'CLOSED') {
+            console.log('❌ Channel subscription closed');
+            setChannelSubscribed(false);
+          } else if (status === 'CHANNEL_ERROR') {
+            console.error('❌ Channel subscription error');
+            setChannelSubscribed(false);
           }
         });
 
-      setChannel(newChannel);
-
-      return () => {
+      setChannel(newChannel);      return () => {
+        console.log('🔌 Unsubscribing from channel');
+        setChannelSubscribed(false);
         newChannel.unsubscribe();
       };
     }
-  }, [sessionId, user?.id, lastNotifiedTime, currentItemIndex]);
+  }, [sessionId, user?.id]); // Removed currentItemIndex and lastNotifiedTime to prevent unnecessary channel recreation
 
   // Load items assigned to this session
   useEffect(() => {
@@ -386,10 +527,19 @@ export default function VotingSession({
       setSessionItemsLoading(false);
     }
   };
-
   const pendingItems = sessionItems;
   const currentItem = pendingItems[currentItemIndex];
 
+  // Debug current item state
+  useEffect(() => {
+    console.log('🔍 Current item state:', {
+      sessionItems_length: sessionItems.length,
+      currentItemIndex,
+      currentItem_id: currentItem?.id,
+      currentItem_title: currentItem?.title,
+      pendingItems_length: pendingItems.length
+    });
+  }, [currentItem, currentItemIndex, sessionItems]);
   // Load votes and user's vote for current item
   useEffect(() => {
     if (currentItem && sessionId && user) {
@@ -401,119 +551,191 @@ export default function VotingSession({
         handleEstimationTypeChange(currentItem.estimationType as 'fibonacci' | 'tshirt');
       }
     }
-  }, [currentItem, sessionId, user]);
-  const loadVotesForCurrentItem = async () => {
+  }, [currentItem, sessionId, user]);  // Helper function to detect vote changes
+  const hasVoteChanges = (newEstimations: any[], currentVotes: Vote[]) => {
+    // Create a map of current votes by user_id
+    const currentVoteMap = new Map();
+    currentVotes.forEach(vote => {
+      currentVoteMap.set(vote.userId, {
+        points: vote.points,
+        timestamp: vote.timestamp?.getTime()
+      });
+    });
+    
+    // Check if any estimation differs from current votes
+    for (const est of newEstimations) {
+      const currentVote = currentVoteMap.get(est.user_id);
+      if (!currentVote) {
+        // New vote found
+        return true;
+      }
+      if (currentVote.points !== est.value) {
+        // Vote value changed
+        return true;
+      }
+      const estTimestamp = new Date(est.created_at).getTime();
+      if (currentVote.timestamp !== estTimestamp) {
+        // Vote timestamp changed (likely updated)
+        return true;
+      }
+    }
+    
+    return false;
+  };
+
+  // Auto-refresh Team Votes section periodically to catch any missed updates
+  useEffect(() => {
+    if (!currentItem || !sessionId || !user) return;
+    
+    console.log('🔄 Setting up auto-refresh for Team Votes section');
+    
+    const refreshInterval = setInterval(async () => {
+      console.log('🔄 AUTO-REFRESH: Checking for vote updates...');
+      try {
+        const estimations = await getEstimationsForItem(sessionId, currentItem.id);
+        console.log('🔄 AUTO-REFRESH: Found', estimations.length, 'estimations');        if (estimations.length !== votes.length || hasVoteChanges(estimations, votes)) {
+          console.log('🔄 AUTO-REFRESH: Vote changes detected, refreshing...');
+          // Trigger a manual refresh by calling the vote loading logic directly
+          setVotesLoading(true);
+          
+          const voteMap = new Map();
+          estimations.forEach((est: any) => {
+            let userName = 'User';
+            
+            if (est.user_id === user?.id && user) {
+              userName = getUserDisplayName(user);
+            } else {
+              const participant = participants.find(p => p.id === est.user_id);
+              if (participant && participant.name && participant.name !== 'User') {
+                userName = participant.name;
+              } else {
+                const userInfo = getUserInfoById(est.user_id);
+                userName = userInfo.name;
+              }
+            }
+            
+            let userRole = 'Team Member';
+            if (est.user_id === user?.id) {
+              userRole = currentUser.role;
+            } else {
+              const participant = participants.find(p => p.id === est.user_id);
+              if (participant?.role) {
+                userRole = participant.role;
+              }
+            }
+            
+            voteMap.set(est.user_id, {
+              userId: est.user_id,
+              userName,
+              userRole,
+              points: est.value,
+              timestamp: new Date(est.created_at),
+              canEdit: est.user_id === user?.id
+            });
+          });
+          
+          const formattedVotes: Vote[] = Array.from(voteMap.values());
+          setVotes(formattedVotes);
+          setVotesLoading(false);
+          
+          console.log('🔄 AUTO-REFRESH: Updated votes to', formattedVotes.length, 'votes');
+        }
+      } catch (error) {
+        console.error('❌ AUTO-REFRESH: Vote refresh failed:', error);
+      }
+    }, 2000); // Check every 2 seconds
+    
+    return () => {
+      console.log('🔄 Cleaning up auto-refresh interval');
+      clearInterval(refreshInterval);
+    };
+  }, [currentItem, sessionId, user, votes.length, participants, currentUser.role]);
+
+  // Add debug function to window for manual testing
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      (window as any).forceRefreshVotes = () => {
+        console.log('🔧 MANUAL REFRESH: Forcing vote refresh...');
+        return loadVotesForCurrentItem().then(() => {
+          console.log('🔧 MANUAL REFRESH: Completed');
+        }).catch((error) => {
+          console.error('❌ MANUAL REFRESH: Failed:', error);
+        });
+      };
+      
+      (window as any).checkVoteDOM = () => {
+        const voteElements = document.querySelectorAll('.space-y-3 .flex.items-center.justify-between.p-3');
+        console.log('🔧 DOM CHECK: Found', voteElements.length, 'vote elements');
+        Array.from(voteElements).forEach((el, index) => {
+          const nameEl = el.querySelector('.font-medium.text-gray-900');
+          const pointsEl = el.querySelector('.px-3.py-1.rounded-lg.font-bold');
+          console.log(`   ${index + 1}. ${nameEl?.textContent} - ${pointsEl?.textContent}`);
+        });
+        return voteElements.length;
+      };
+    }
+  }, []);  const loadVotesForCurrentItem = useCallback(async () => {
     if (!currentItem || !sessionId) return;
+    
+    console.log('🔍 Loading votes for item:', currentItem.id);
+    console.log('🔍 VOTE LOADING DEBUG:', {
+      current_item_id: currentItem.id,
+      session_id: sessionId,
+      current_user_id: user?.id,
+      current_user_email: user?.email,
+      participants_count: participants.length,
+      participants_list: participants.map(p => ({ id: p.id, name: p.name }))
+    });
     
     setVotesLoading(true);
     try {
-      console.log('🔍 Loading votes - Initial state:', {
-        currentItem_id: currentItem.id,
-        sessionId,
-        user_id: user?.id,
-        user_email: user?.email,
-        user_metadata: user?.user_metadata,
-        currentUser: currentUser,
-        participants_count: participants.length,
-        participants: participants
-      });
-      
       const estimations = await getEstimationsForItem(sessionId, currentItem.id);
-      console.log('🔍 Raw estimations from database:', estimations);
+      console.log('🔍 Raw estimations received:', estimations.length, 'records');
       
       // Create a map to ensure unique votes by user_id
       const voteMap = new Map();
       estimations.forEach((est: any) => {
-        console.log('🔍 Processing estimation for user:', {
+        console.log('🔍 Processing estimation:', {
           est_user_id: est.user_id,
+          current_user_id: user?.id,
+          current_user_email: user?.email,
+          current_user_metadata: user?.user_metadata,
           is_current_user: est.user_id === user?.id,
-          est_user_profiles: est.user_profiles,
-          est_user_metadata: est.user_metadata
+          est_value: est.value
         });
         
-        // Enhanced user name resolution with detailed logging
+        // Enhanced user name resolution
         let userName = 'User';
-        let nameSource = 'fallback';
         
-        if (est.user_profiles?.full_name) {
-          userName = est.user_profiles.full_name;
-          nameSource = 'database_profile';        } else if (est.user_id === user?.id && user) {
-          // This is the current user - use the SAME logic as presence tracking for consistency
-          const emailPrefix = user.email?.split('@')[0];
-          
-          if (user.user_metadata?.full_name) {
-            userName = user.user_metadata.full_name;
-            nameSource = 'auth_metadata_full_name';
-          } else if (user.user_metadata?.name) {
-            userName = user.user_metadata.name;
-            nameSource = 'auth_metadata_name';
-          } else if (emailPrefix) {
-            // Use email prefix (same as presence tracking) for consistency
-            userName = emailPrefix;
-            nameSource = 'email_prefix';
-          } else if (currentUser.name) {
-            userName = currentUser.name;
-            nameSource = 'currentUser_name';
-          } else {
-            userName = 'Current User';
-            nameSource = 'current_user_fallback';
-          }
-          
-          console.log('🔍 Current user name resolution (consistent with presence):', {
-            user_id: user.id,
-            email: user.email,
-            emailPrefix: emailPrefix,
-            user_metadata_full_name: user.user_metadata?.full_name,
-            user_metadata_name: user.user_metadata?.name,
-            currentUser_name: currentUser.name,
-            final_userName: userName,
-            nameSource: nameSource,
-            note: 'Using same logic as presence tracking'
-          });
-        }else {
-          // Look for user in session participants
+        if (est.user_id === user?.id && user) {
+          // This is the current user - use consistent logic
+          userName = getUserDisplayName(user);
+          console.log('🔍 Current user display name:', userName);        } else {
+          // For other users, try to find them in session participants first
           const participant = participants.find(p => p.id === est.user_id);
           if (participant && participant.name && participant.name !== 'User') {
             userName = participant.name;
-            nameSource = 'participant_data';
+            console.log('🔍 Found participant name:', userName);
           } else {
-            userName = `User ${est.user_id.slice(-4)}`;
-            nameSource = 'user_id_fallback';
+            // Use the getUserInfoById function for consistent naming
+            const userInfo = getUserInfoById(est.user_id);
+            userName = userInfo.name;
+            console.log('🔍 Using getUserInfoById result:', userName);
           }
-          
-          console.log('🔍 Other user name resolution:', {
-            est_user_id: est.user_id,
-            participant: participant,
-            final_userName: userName,
-            nameSource: nameSource
-          });
         }
-          let userRole = 'Team Member'; // default fallback
         
-        if (est.user_profiles?.role) {
-          userRole = est.user_profiles.role;
-        } else if (est.user_id === user?.id) {
-          // For current user, use their actual role from currentUser
+        // Role resolution
+        let userRole = 'Team Member';
+        if (est.user_id === user?.id) {
           userRole = currentUser.role;
         } else {
-          // For other users, try participant data or estimation data
           const participant = participants.find(p => p.id === est.user_id);
           if (participant?.role) {
             userRole = participant.role;
-          } else if (est.role) {
-            userRole = est.role;
           }
         }
         
-        console.log('🔍 Role resolution for user:', {
-          est_user_id: est.user_id,
-          is_current_user: est.user_id === user?.id,
-          est_user_profiles_role: est.user_profiles?.role,
-          currentUser_role: currentUser.role,
-          participant_role: participants.find(p => p.id === est.user_id)?.role,
-          est_role: est.role,
-          final_userRole: userRole
-        });
+        console.log('🔍 Final user info:', { userId: est.user_id, userName, userRole });
         
         voteMap.set(est.user_id, {
           userId: est.user_id,
@@ -522,28 +744,45 @@ export default function VotingSession({
           points: est.value,
           timestamp: new Date(est.created_at),
           canEdit: est.user_id === user?.id
-        });
-      });
-        const formattedVotes: Vote[] = Array.from(voteMap.values());
-      console.log('🔍 Final formatted votes:', formattedVotes);
+        });      });const formattedVotes: Vote[] = Array.from(voteMap.values());
+      console.log('🔍 Loaded', formattedVotes.length, 'votes for item');
+      console.log('🔍 DETAILED VOTE DATA:', formattedVotes.map(vote => ({
+        userId: vote.userId,
+        userName: vote.userName,
+        points: vote.points,
+        timestamp: vote.timestamp?.toLocaleTimeString(),
+        canEdit: vote.canEdit
+      })));
+      
       setVotes(formattedVotes);
+      
+      // Add a small delay and then verify votes were set
+      setTimeout(() => {
+        console.log('🔍 VOTE STATE VERIFICATION:', {
+          votesSetTo: formattedVotes.length,
+          currentVotesState: votes.length,
+          stateMatches: formattedVotes.length === votes.length
+        });
+      }, 100);
     } catch (error) {
       console.error('Error loading votes:', error);
       setVotes([]);
     } finally {
       setVotesLoading(false);
     }
-  };
-
+  }, [currentItem, sessionId, user, participants, currentUser.role]);
   const loadUserVote = async () => {
     if (!currentItem || !sessionId || !user) return;
     
     try {
+      console.log('🔍 Loading user vote for current user');
       const userEstimation = await getUserVote(sessionId, currentItem.id, user.id);
       setMyVote(userEstimation?.value || null);
+      console.log('✅ User vote loaded:', userEstimation?.value || 'no vote');
     } catch (error) {
-      console.error('Error loading user vote:', error);
+      console.error('❌ Error loading user vote:', error);
       setMyVote(null);
+      // Don't let this error break the component
     }
   };
 
@@ -663,25 +902,54 @@ export default function VotingSession({
     setLoading(true);
     const wasExistingVote = myVote !== null;
     
-    try {
-      await submitEstimation(sessionId, currentItem.id, user.id, value);
+    try {      await submitEstimation(sessionId, currentItem.id, user.id, value);
       setMyVote(value.toString());
       
       // Refresh votes immediately to show updated state
       await loadVotesForCurrentItem();
+        // Wait a moment to ensure database write is fully committed before broadcasting
+      await new Promise(resolve => setTimeout(resolve, 250));
       
       // Broadcast vote event to other participants
-      if (channel) {
-        channel.send({
+      if (channel && channelSubscribed) {
+        const voterDisplayName = getUserDisplayName(user);
+        const voterInitials = getUserInitials(voterDisplayName);
+        
+        const broadcastPayload = {
           type: 'broadcast',
           event: wasExistingVote ? 'vote-changed' : 'vote-submitted',
           payload: {
             itemId: currentItem.id,
             voterId: user.id,
-            voterName: user.user_metadata?.full_name || user.email?.split('@')[0] || 'User',
+            voterName: voterDisplayName,
+            voterInitials: voterInitials,
             value: value.toString(),
             timestamp: new Date().toISOString()
           }
+        };
+        
+        console.log('📡 Attempting to send vote broadcast:', {
+          channel_state: channel.state,
+          channel_subscribed: channelSubscribed,
+          payload: broadcastPayload,
+          currentItem_id: currentItem.id,
+          user_id: user.id
+        });
+        
+        // Send immediately without delay, but with better error handling
+        channel.send(broadcastPayload).then((result: any) => {
+          console.log('✅ Vote broadcast sent successfully:', result);
+        }).catch((error: any) => {
+          console.error('❌ Vote broadcast failed:', error);
+          console.error('❌ Channel state when failed:', channel.state);
+          console.error('❌ Channel subscribed status:', channelSubscribed);
+        });
+      } else {
+        console.error('❌ Cannot broadcast vote - channel not ready', {
+          channel_exists: !!channel,
+          channel_subscribed: channelSubscribed,
+          user_id: user?.id,
+          sessionId: sessionId
         });
       }
     } catch (error: any) {
@@ -1546,17 +1814,27 @@ export default function VotingSession({
                   Reveal Votes
                 </button>
               )}
-            </div>
-
-            <div className="space-y-3">
+            </div>            <div className="space-y-3">
+              {(() => {
+                console.log('🔍 VOTE RENDERING DEBUG:', {
+                  votesLoading,
+                  votesLength: votes.length,
+                  votes: votes.map(v => ({ userId: v.userId, userName: v.userName, points: v.points })),
+                  shouldShowVotes: !votesLoading && votes.length > 0,
+                  shouldShowWaiting: !votesLoading && votes.length === 0
+                });
+                return null;
+              })()}
+              
               {votesLoading && (
                 <div className="flex items-center justify-center py-4">
                   <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
                   <span className="ml-2 text-gray-600">Updating votes...</span>
                 </div>
               )}
-              
-              {!votesLoading && votes.length > 0 && votes.map((vote) => (
+                {!votesLoading && votes.length > 0 && votes.map((vote) => {
+                console.log('🔍 RENDERING VOTE:', vote);
+                return (
                 <div key={vote.userId} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg transition-all duration-300 hover:bg-gray-100">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
@@ -1566,10 +1844,9 @@ export default function VotingSession({
                     </div>
                     <div>
                       <span className="font-medium text-gray-900">{vote.userName}</span>
-                      <span className="text-sm text-gray-500 ml-2">
-                        ({vote.username === 'nicholas.d.lowrie' ? 'Moderator' : 'Team Member'})
+                      <span className="text-sm text-gray-500 ml-2">                        ({vote.userName === 'nicholas.d.lowrie' ? 'Moderator' : 'Team Member'})
                       </span>
-                      {vote.username === currentUser?.username && (
+                      {vote.userName === currentUser?.name && (
                         <span className="text-xs text-blue-600 ml-2 font-medium">You</span>
                       )}
                     </div>
@@ -1593,7 +1870,8 @@ export default function VotingSession({
                     </div>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
 
             {!votesLoading && votes.length === 0 && (

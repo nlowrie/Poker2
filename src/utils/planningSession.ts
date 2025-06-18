@@ -24,6 +24,9 @@ export async function getActivePlanningSessions() {
 
 // Submit an estimation for a backlog item in a session
 export async function submitEstimation(session_id: string, backlog_item_id: string, user_id: string, value: string | number) {
+  console.log('🗳️ Submitting estimation:', { session_id, backlog_item_id, user_id, value });
+  console.log('🗳️ Submit timestamp:', new Date().toISOString());
+  
   // First, try to get existing estimation
   const { data: existing, error: selectError } = await supabase
     .from('estimations')
@@ -34,11 +37,12 @@ export async function submitEstimation(session_id: string, backlog_item_id: stri
     .single();
 
   if (selectError && selectError.code !== 'PGRST116') {
-    console.error('Error checking existing estimation:', selectError);
+    console.error('❌ Error checking existing estimation:', selectError);
     // If the select fails, try to proceed with insert anyway
   }
 
   if (existing) {
+    console.log('🔄 Updating existing estimation:', existing.id);
     // Update existing estimation
     const { data, error } = await supabase
       .from('estimations')
@@ -49,9 +53,14 @@ export async function submitEstimation(session_id: string, backlog_item_id: stri
       .eq('id', existing.id)
       .select()
       .single();
-    if (error) throw error;
+    if (error) {
+      console.error('❌ Failed to update estimation:', error);
+      throw error;
+    }
+    console.log('✅ Estimation updated successfully:', data);
     return data;
   } else {
+    console.log('➕ Inserting new estimation');
     // Insert new estimation with both backlog_item_id and issue_id for compatibility
     const { data, error } = await supabase
       .from('estimations')
@@ -64,65 +73,77 @@ export async function submitEstimation(session_id: string, backlog_item_id: stri
       }])
       .select()
       .single();
-    if (error) throw error;
+    if (error) {
+      console.error('❌ Failed to insert estimation:', error);
+      throw error;
+    }
+    console.log('✅ Estimation inserted successfully:', data);
     return data;
   }
 }
 
 // Get all estimations for a specific backlog item in a session
 export async function getEstimationsForItem(session_id: string, backlog_item_id: string) {
+  console.log('🔍 Querying estimations:', { session_id, backlog_item_id });
+  console.log('🔍 Query timestamp:', new Date().toISOString());
+  
   try {
-    // First try with user_profiles join
+    // Try basic query first to avoid 406 errors
     const { data, error } = await supabase
       .from('estimations')
-      .select(`
-        *,
-        user_profiles(full_name, role)
-      `)
+      .select('*')
       .eq('session_id', session_id)
       .eq('backlog_item_id', backlog_item_id);
     
     if (error) {
-      console.warn('User profiles join failed, using fallback:', error);
+      console.error('❌ Estimations query failed:', error);
       throw error;
     }
-    return data;
-  } catch (error) {
-    console.warn('Error fetching estimations with profiles, trying fallback:', error);
     
-    // Fallback: try without user_profiles join
-    try {
-      const { data: fallbackData, error: fallbackError } = await supabase
-        .from('estimations')
-        .select('*')
-        .eq('session_id', session_id)
-        .eq('backlog_item_id', backlog_item_id);
-      
-      if (fallbackError) {
-        console.error('Fallback query failed:', fallbackError);
-        throw fallbackError;
-      }
-      
-      console.log('Using fallback data (without user profiles):', fallbackData);
-      return fallbackData;
-    } catch (fallbackError) {
-      console.error('Both queries failed:', fallbackError);
-      return [];
+    console.log('✅ Estimations query successful:', data?.length || 0, 'records');
+    if (data && data.length > 0) {
+      console.log('🔍 Estimation records found:', data.map(d => ({
+        user_id: d.user_id,
+        value: d.value,
+        created_at: d.created_at,
+        updated_at: d.updated_at
+      })));
+    } else {
+      console.log('⚠️ No estimation records found for this query');
     }
+    
+    return data || [];
+    
+  } catch (error) {
+    console.error('❌ Failed to fetch estimations:', error);
+    return [];
   }
 }
 
 // Get user's vote for a specific backlog item
 export async function getUserVote(session_id: string, backlog_item_id: string, user_id: string) {
-  const { data, error } = await supabase
-    .from('estimations')
-    .select('*')
-    .eq('session_id', session_id)
-    .eq('backlog_item_id', backlog_item_id)
-    .eq('user_id', user_id)
-    .single();
-  if (error && error.code !== 'PGRST116') throw error; // PGRST116 is "not found"
-  return data;
+  console.log('🔍 Getting user vote:', { session_id, backlog_item_id, user_id });
+  
+  try {
+    const { data, error } = await supabase
+      .from('estimations')
+      .select('*')
+      .eq('session_id', session_id)
+      .eq('backlog_item_id', backlog_item_id)
+      .eq('user_id', user_id)
+      .maybeSingle(); // Use maybeSingle instead of single to handle no results gracefully
+      
+    if (error) {
+      console.error('❌ getUserVote query failed:', error);
+      throw error;
+    }
+    
+    console.log('✅ getUserVote query successful:', data ? 'found vote' : 'no vote found');
+    return data;
+  } catch (error) {
+    console.error('❌ getUserVote failed, returning null:', error);
+    return null; // Return null instead of throwing to prevent app breakage
+  }
 }
 
 // Get all estimations for a session (for session management)
