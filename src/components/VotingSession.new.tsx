@@ -46,7 +46,7 @@ export default function VotingSession({
     isOnline: boolean;
     lastSeen: Date;
   }>>([]);
-  const [isChatVisible, setIsChatVisible] = useState(true);
+  const [isChatVisible, setIsChatVisible] = useState(false);
   const [, setChatUnreadCount] = useState(0); // Keep setter for chat notifications
   const [isVideoCallActive, setIsVideoCallActive] = useState(false);
 

@@ -42,15 +42,14 @@ export default function VotingSession({
   const [channelSubscribed, setChannelSubscribed] = useState(false);
   const [lastNotifiedTime, setLastNotifiedTime] = useState<number | null>(null);
   const [votesLoading, setVotesLoading] = useState(false);
-  const [voteNotification, setVoteNotification] = useState<string | null>(null);
-  const [participants, setParticipants] = useState<Array<{
+  const [voteNotification, setVoteNotification] = useState<string | null>(null);  const [participants, setParticipants] = useState<Array<{
     id: string;
     name: string;
     role: string;
     isOnline: boolean;
     lastSeen: Date;
   }>>([]);
-  const [isChatVisible, setIsChatVisible] = useState(true);
+  const [isChatVisible, setIsChatVisible] = useState(false);
   const [chatUnreadCount, setChatUnreadCount] = useState(0);
   const [isVideoCallActive, setIsVideoCallActive] = useState(false);
 

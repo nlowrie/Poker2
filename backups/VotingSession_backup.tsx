@@ -49,7 +49,7 @@ export default function VotingSession({
     isOnline: boolean;
     lastSeen: Date;
   }>>([]);
-  const [isChatVisible, setIsChatVisible] = useState(true);
+  const [isChatVisible, setIsChatVisible] = useState(false);
   const [chatUnreadCount, setChatUnreadCount] = useState(0);
   const [isVideoCallActive, setIsVideoCallActive] = useState(false);
 
