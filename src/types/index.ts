@@ -45,6 +45,48 @@ export interface Estimation {
   updated_at: string;
 }
 
+// Session management types
+export interface SessionSummary {
+  sessionId: string;
+  title: string;
+  startTime: Date;
+  endTime: Date;
+  duration: number; // in minutes
+  totalVotes: number;
+  consensusReached: boolean;
+  finalEstimate?: string;
+  participants: {
+    userId: string;
+    username: string;
+    totalVotes: number;
+    participationRate: number;
+  }[];
+  stories: {
+    storyId: string;
+    title: string;
+    finalEstimate: string;
+    votingRounds: number;
+    consensusReached: boolean;
+    votes: { userId: string; vote: string }[];
+  }[];
+  averageVotingTime: number;
+  createdBy: string;
+  roomCode?: string;
+  status: 'completed';
+}
+
+export interface PlanningSession {
+  id: string;
+  name: string;
+  started_by: string;
+  started_at: string;
+  ended_at?: string;
+  is_active: boolean;
+  status: 'active' | 'completed';
+  room_code?: string;
+  summary?: SessionSummary;
+}
+
 export interface ChatMessage {
   id: string;
   sessionId: string;
@@ -70,7 +112,7 @@ export interface AppState {
   currentItemIndex: number;
   teamMembers: User[];
 }
-git
+
 export interface VideoParticipant {
   id: string;
   name: string;

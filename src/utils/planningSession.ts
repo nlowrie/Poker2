@@ -569,3 +569,20 @@ export async function clearVotesForItem(session_id: string, backlog_item_id: str
   console.log('✅ All votes cleared for item:', data);
   return data;
 }
+
+// End a planning session and generate summary
+export async function endPlanningSession(sessionId: string, userId: string) {
+  const { sessionHistoryService } = await import('./sessionHistory');
+  return await sessionHistoryService.endSession(sessionId, userId);
+}
+
+// Get completed sessions
+export async function getCompletedPlanningSessions() {
+  const { data, error } = await supabase
+    .from('planning_sessions')
+    .select('*')
+    .eq('status', 'completed')
+    .order('ended_at', { ascending: false });
+  if (error) throw error;
+  return data;
+}

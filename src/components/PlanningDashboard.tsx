@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { BacklogItem, User } from '../types';
-import { Plus, FileText, AlertCircle, CheckCircle, Upload, Trash2, Edit3, Save, X, Calendar, Users, Play, Share } from 'lucide-react';
+import { Plus, FileText, AlertCircle, CheckCircle, Upload, Trash2, Edit3, Save, X, Calendar, Users, Play, Share, StopCircle } from 'lucide-react';
 import { generateSampleBacklog } from '../utils/planningPoker';
-import { getActivePlanningSessions, startPlanningSession, deletePlanningSession, addItemToSession, getSessionItems, createBacklogItem, getAllBacklogItems, updateBacklogItem, deleteBacklogItem, getAssignedItems, removeItemFromSession } from '../utils/planningSession';
+import { getActivePlanningSessions, startPlanningSession, deletePlanningSession, addItemToSession, getSessionItems, createBacklogItem, getAllBacklogItems, updateBacklogItem, deleteBacklogItem, getAssignedItems, removeItemFromSession, endPlanningSession } from '../utils/planningSession';
 import VotingSession from './VotingSession';
 import SessionInvite from './SessionInvite';
 import UserIcon from './UserIcon';
@@ -25,7 +25,9 @@ export default function PlanningDashboard({ backlogItems, onBacklogUpdate, curre
   const [sessionItems, setSessionItems] = useState<BacklogItem[]>([]);
   const [assignedItemIds, setAssignedItemIds] = useState<string[]>([]);
   const [sessionsWithItems, setSessionsWithItems] = useState<{[key: string]: BacklogItem[]}>({});
-  const [inviteSession, setInviteSession] = useState<any | null>(null);  const [showDevPanel, setShowDevPanel] = useState(false);
+  const [inviteSession, setInviteSession] = useState<any | null>(null);
+  const [showDevPanel, setShowDevPanel] = useState(false);
+  const [endingSession, setEndingSession] = useState<string | null>(null);
   
   // Ref to track current sessions for real-time callbacks
   const sessionsRef = useRef<any[]>([]);
@@ -370,8 +372,7 @@ export default function PlanningDashboard({ backlogItems, onBacklogUpdate, curre
     } catch (error) {
       console.error('❌ Error creating session:', error);
     }
-  };
-  const handleDeleteSession = async (sessionId: string) => {
+  };  const handleDeleteSession = async (sessionId: string) => {
     try {
       await deletePlanningSession(sessionId);
       const updatedSessions = sessions.filter(s => s.id !== sessionId);
@@ -379,6 +380,32 @@ export default function PlanningDashboard({ backlogItems, onBacklogUpdate, curre
       sessionsRef.current = updatedSessions;
     } catch (error) {
       console.error('Error deleting session:', error);
+    }
+  };
+
+  const handleEndSession = async (sessionId: string) => {
+    if (!window.confirm('Are you sure you want to end this session? This will generate a summary and move it to completed sessions.')) {
+      return;
+    }
+
+    try {
+      setEndingSession(sessionId);
+      console.log('🔚 Ending session:', sessionId);
+      
+      const summary = await endPlanningSession(sessionId, currentUser.id);
+      console.log('✅ Session ended successfully, summary:', summary);
+      
+      // Show alert with basic summary info
+      alert(`Session ended successfully!\n\nDuration: ${Math.round(summary.duration)} minutes\nStories: ${summary.stories.length}\nParticipants: ${summary.participants.length}`);
+      
+      // Refresh sessions to remove the ended session from active list
+      await loadSessions();
+      
+    } catch (error) {
+      console.error('❌ Failed to end session:', error);
+      alert('Failed to end session. Please try again.');
+    } finally {
+      setEndingSession(null);
     }
   };
 
@@ -715,14 +742,27 @@ export default function PlanningDashboard({ backlogItems, onBacklogUpdate, curre
                           className="bg-green-600 text-white px-3 py-1 rounded-lg hover:bg-green-700 transition-colors duration-200 flex items-center gap-1"
                         >
                           <Play className="w-3 h-3" />
-                          Join                        </button>
-                        {currentUser.role === 'Moderator' && (
-                          <button
-                            onClick={() => handleDeleteSession(session.id)}
-                            className="bg-red-600 text-white px-3 py-1 rounded-lg hover:bg-red-700 transition-colors duration-200"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
+                          Join                        </button>                        {currentUser.role === 'Moderator' && (
+                          <>
+                            <button
+                              onClick={() => handleEndSession(session.id)}
+                              disabled={endingSession === session.id}
+                              className="bg-orange-600 text-white px-3 py-1 rounded-lg hover:bg-orange-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                            >
+                              {endingSession === session.id ? (
+                                <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
+                              ) : (
+                                <StopCircle className="w-3 h-3" />
+                              )}
+                              {endingSession === session.id ? 'Ending...' : 'End'}
+                            </button>
+                            <button
+                              onClick={() => handleDeleteSession(session.id)}
+                              className="bg-red-600 text-white px-3 py-1 rounded-lg hover:bg-red-700 transition-colors duration-200"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </>
                         )}
                       </div>
                     </div>
