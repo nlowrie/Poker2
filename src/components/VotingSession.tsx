@@ -407,30 +407,20 @@ export default function VotingSession({
           const { newItemIndex, changedBy } = payload.payload;
           // Only update if the change wasn't made by this user
           if (changedBy !== user?.id) {
+            console.log('🔄 Received item-changed broadcast, updating to index:', newItemIndex);
             setCurrentItemIndex(newItemIndex);
             
-            // Get the new item from session items to check if it's estimated
-            const newItem = sessionItemsRef.current[newItemIndex];
+            // Reset voting state for new item
+            setMyVote(null);
+            setVotes([]);
+            setTimerActive(false);
+            setTimeRemaining(null);
+            setModeratorConsensus(null);
+            setIsEditingConsensus(false);
+            setEditedConsensusValue('');
             
-            if (newItem?.status === 'Estimated') {
-              // For estimated items, don't fully reset - keep reveal state and set moderator consensus
-              setMyVote(null);
-              setVotes([]);
-              setTimerActive(false);
-              setTimeRemaining(null);              setIsEditingConsensus(false);
-              setEditedConsensusValue('');
-              
-              // Auto-reveal votes and set moderator consensus for estimated items
-              setIsRevealed(true);
-              if (newItem.storyPoints !== undefined && newItem.storyPoints !== null) {
-                setModeratorConsensus(String(newItem.storyPoints));
-              }
-              
-              console.log('🔍 Auto-revealing votes for estimated item on navigation:', newItem.title);
-            } else {
-              // For non-estimated items, do a full reset
-              resetForNewItem();
-            }
+            // The useEffect for estimated items will handle setting reveal state and consensus
+            console.log('� Navigation broadcast handled, useEffect will handle reveal state');
             
             // Show notification for team members
             if (currentUser.role === 'Team Member') {
@@ -807,12 +797,24 @@ export default function VotingSession({
         handleEstimationTypeChange(currentItem.estimationType as 'fibonacci' | 'tshirt');
       }
     }
-  }, [currentItem, sessionId, user]);
-  // Auto-reveal votes for estimated items and initialize moderator consensus
+  }, [currentItem, sessionId, user]);  // Auto-reveal votes for estimated items and initialize moderator consensus
   useEffect(() => {
     if (currentItem?.status === 'Estimated') {
       console.log('🔍 Auto-revealing votes for estimated item:', currentItem.title);
-      setIsRevealed(true);
+      console.log('🔍 Current votes length:', votes.length);
+      console.log('🔍 Current isRevealed state:', isRevealed);
+      console.log('🔍 Current storyPoints:', currentItem.storyPoints);
+      
+      // Force load votes first, then reveal
+      if (sessionId && user) {
+        console.log('🔍 Force loading votes for estimated item...');
+        loadVotesForCurrentItem().then(() => {
+          console.log('🔍 Votes loaded, revealing them now');
+          setIsRevealed(true);
+        });
+      } else {
+        setIsRevealed(true);
+      }
       
       // Initialize moderator consensus with the stored story points for estimated items
       if (currentItem.storyPoints !== undefined && currentItem.storyPoints !== null) {
@@ -821,11 +823,12 @@ export default function VotingSession({
       }
     } else {
       // Reset reveal state for non-estimated items
+      console.log('🔍 Item is not estimated, hiding votes for:', currentItem?.title);
       setIsRevealed(false);
       // Clear moderator consensus for non-estimated items
       setModeratorConsensus(null);
     }
-  }, [currentItem?.id, currentItem?.status, currentItem?.storyPoints]);
+  }, [currentItem?.id, currentItem?.status, currentItem?.storyPoints, sessionId, user]);
 
   // Helper function to detect vote changes
   const hasVoteChanges = (newEstimations: any[], currentVotes: Vote[]) => {
@@ -909,8 +912,12 @@ export default function VotingSession({
               canEdit: est.user_id === user?.id
             });
           });
+            const formattedVotes: Vote[] = Array.from(voteMap.values());
+          console.log('🗳️ Formatted votes for item:', currentItem?.title);
+          console.log('🗳️ Number of votes loaded:', formattedVotes.length);
+          console.log('🗳️ Vote details:', formattedVotes);
+          console.log('🗳️ Item status:', currentItem?.status);
           
-          const formattedVotes: Vote[] = Array.from(voteMap.values());
           setVotes(formattedVotes);
           setVotesLoading(false);
           
@@ -1365,7 +1372,7 @@ export default function VotingSession({
       }
     }
   };const resetForNewItem = () => {
-    setIsRevealed(false);
+    // Don't reset isRevealed here - let the useEffect handle it based on item status
     setMyVote(null);
     setVotes([]);
     setTimerActive(false);
@@ -2642,8 +2649,16 @@ export default function VotingSession({
                 <Users className="w-12 h-12 mx-auto mb-3 opacity-50" />
                 <p>Waiting for team votes...</p>
                 <p className="text-sm mt-1">Team members need to select their estimates</p>
-              </div>
-            )}
+              </div>            )}
+
+            {(() => {
+              console.log('🎯 ESTIMATION RESULTS RENDER CHECK:');
+              console.log('🎯 isRevealed:', isRevealed);
+              console.log('🎯 votes.length:', votes.length);
+              console.log('🎯 currentItem.status:', currentItem?.status);
+              console.log('🎯 Should show results:', isRevealed && votes.length > 0);
+              return null;
+            })()}
 
             {isRevealed && votes.length > 0 && (
               <div className={`mt-6 p-4 rounded-xl border ${
