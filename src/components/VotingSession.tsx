@@ -642,28 +642,26 @@ export default function VotingSession({
             estimationType: item.backlog_items.estimation_type,
             acceptanceCriteria: item.backlog_items.acceptance_criteria || [],
             votingTimeLimit: item.backlog_items.voting_time_limit || 300
-          };
-        })
-        .filter((item: BacklogItem) => item.status === 'Pending');
+          };        })
+        // Remove filter to include both pending and estimated items
+        // .filter((item: BacklogItem) => item.status === 'Pending');
       
       setSessionItems(sessionBacklogItems);
     } catch (error) {
       console.error('Error loading session items:', error);
     } finally {
       setSessionItemsLoading(false);
-    }
-  };
-  const pendingItems = sessionItems;
-  const currentItem = pendingItems[currentItemIndex];
+    }  };
+  const allSessionItems = sessionItems; // Include both pending and estimated items
+  const currentItem = allSessionItems[currentItemIndex];
 
   // Debug current item state
   useEffect(() => {
     console.log('🔍 Current item state:', {
       sessionItems_length: sessionItems.length,
-      currentItemIndex,
-      currentItem_id: currentItem?.id,
+      currentItemIndex,      currentItem_id: currentItem?.id,
       currentItem_title: currentItem?.title,
-      pendingItems_length: pendingItems.length
+      allSessionItems_length: allSessionItems.length
     });
   }, [currentItem, currentItemIndex, sessionItems]);
   // Load votes and user's vote for current item
@@ -677,7 +675,20 @@ export default function VotingSession({
         handleEstimationTypeChange(currentItem.estimationType as 'fibonacci' | 'tshirt');
       }
     }
-  }, [currentItem, sessionId, user]);  // Helper function to detect vote changes
+  }, [currentItem, sessionId, user]);
+
+  // Auto-reveal votes for estimated items
+  useEffect(() => {
+    if (currentItem?.status === 'Estimated') {
+      console.log('🔍 Auto-revealing votes for estimated item:', currentItem.title);
+      setIsRevealed(true);
+    } else {
+      // Reset reveal state for non-estimated items
+      setIsRevealed(false);
+    }
+  }, [currentItem?.id, currentItem?.status]);
+
+  // Helper function to detect vote changes
   const hasVoteChanges = (newEstimations: any[], currentVotes: Vote[]) => {
     // Create a map of current votes by user_id
     const currentVoteMap = new Map();
@@ -1175,9 +1186,8 @@ export default function VotingSession({
       setTimeout(() => setVoteNotification(null), 3000);
     }
   };
-
   const nextItem = () => {
-    if (currentItemIndex < pendingItems.length - 1) {
+    if (currentItemIndex < allSessionItems.length - 1) {
       const newIndex = currentItemIndex + 1;
       setCurrentItemIndex(newIndex);
       resetForNewItem();
@@ -1190,13 +1200,12 @@ export default function VotingSession({
           payload: {
             newItemIndex: newIndex,
             changedBy: user?.id,
-            newItemTitle: pendingItems[newIndex]?.title || 'Unknown Item'
+            newItemTitle: allSessionItems[newIndex]?.title || 'Unknown Item'
           }
         });
       }
     }
   };
-
   const previousItem = () => {
     if (currentItemIndex > 0) {
       const newIndex = currentItemIndex - 1;
@@ -1211,12 +1220,12 @@ export default function VotingSession({
           payload: {
             newItemIndex: newIndex,
             changedBy: user?.id,
-            newItemTitle: pendingItems[newIndex]?.title || 'Unknown Item'
+            newItemTitle: allSessionItems[newIndex]?.title || 'Unknown Item'
           }
         });
       }
     }
-  };  const resetForNewItem = () => {
+  };const resetForNewItem = () => {
     setIsRevealed(false);
     setMyVote(null);
     setVotes([]);
@@ -1912,7 +1921,7 @@ export default function VotingSession({
                 </div>
                 <div className="flex items-center gap-2">
                   <Clock className="w-4 h-4" />
-                  Item {currentItemIndex + 1} of {pendingItems.length}
+                  Item {currentItemIndex + 1} of {allSessionItems.length}
                 </div>
               </div>
             </div>
@@ -1970,7 +1979,7 @@ export default function VotingSession({
                 <div className="flex items-center gap-3">
                   <div className="flex items-center gap-2 text-blue-800">
                     <Clock className="w-5 h-5" />
-                    <span className="font-medium">Current Item: {currentItemIndex + 1} of {pendingItems.length}</span>
+                    <span className="font-medium">Current Item: {currentItemIndex + 1} of {allSessionItems.length}</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-4">
@@ -2259,19 +2268,26 @@ export default function VotingSession({
           </div>
 
           {/* Votes Display */}
-          <div className="bg-white rounded-xl p-6 shadow-lg border border-gray-200">
-            <div className="flex items-center justify-between mb-4">
+          <div className="bg-white rounded-xl p-6 shadow-lg border border-gray-200">            <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-gray-900">Team Votes</h3>
-              {currentUser.role === 'Moderator' && votes.length > 0 && !isRevealed && (
-                <button
-                  onClick={revealVotes}
-                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors duration-200 flex items-center gap-2"
-                >
-                  <Eye className="w-4 h-4" />
-                  Reveal Votes
-                </button>
-              )}
-            </div>            <div className="space-y-3">
+              <div className="flex items-center gap-3">
+                {currentItem?.status === 'Estimated' && isRevealed && (
+                  <span className="text-sm text-green-600 font-medium flex items-center gap-1">
+                    <CheckCircle className="w-4 h-4" />
+                    Auto-revealed (Item Estimated)
+                  </span>
+                )}
+                {currentUser.role === 'Moderator' && votes.length > 0 && !isRevealed && (
+                  <button
+                    onClick={revealVotes}
+                    className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors duration-200 flex items-center gap-2"
+                  >
+                    <Eye className="w-4 h-4" />
+                    Reveal Votes
+                  </button>
+                )}
+              </div>
+            </div><div className="space-y-3">
               {(() => {
                 console.log('🔍 VOTE RENDERING DEBUG:', {
                   votesLoading,
