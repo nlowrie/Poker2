@@ -515,10 +515,9 @@ export default function VotingSession({
               setVoteNotification(`⚙️ ${changedByName} configured timer to ${timeDisplay}`);
               setTimeout(() => setVoteNotification(null), 4000);
             }
-          }        })
-        .on('broadcast', { event: 'consensus-changed' }, (payload) => {
+          }        })        .on('broadcast', { event: 'consensus-changed' }, (payload) => {
           console.log('📥 Received consensus-changed broadcast:', payload);
-          const { itemId, newConsensusValue, changedBy, changedByName } = payload.payload;
+          const { itemId, newConsensusValue, changedBy, changedByName, isEstimatedItem } = payload.payload;
           
           // Get current item from refs to avoid stale closure
           const currentSessionItems = sessionItemsRef.current;
@@ -534,11 +533,33 @@ export default function VotingSession({
           if (itemId === currentActiveItem.id && changedBy !== user?.id) {
             console.log('🔄 Updating consensus due to moderator change');
             
-            // Update the moderator consensus for this participant
-            setModeratorConsensus(newConsensusValue);
-            
-            // Show notification about the consensus update
-            setVoteNotification(`🎯 Moderator ${changedByName} set consensus to ${newConsensusValue}`);
+            // For estimated items, update the session items array
+            if (isEstimatedItem) {
+              const updatedPoints = estimationType === 'fibonacci' 
+                ? parseFloat(newConsensusValue) 
+                : newConsensusValue;
+              
+              setSessionItems(prevItems => 
+                prevItems.map(item => 
+                  item.id === itemId 
+                    ? { ...item, storyPoints: updatedPoints }
+                    : item
+                )
+              );
+              
+              console.log('✅ Updated session items for estimated item:', {
+                itemId,
+                newStoryPoints: updatedPoints
+              });
+            } else {
+              // Update the moderator consensus for non-estimated items
+              setModeratorConsensus(newConsensusValue);
+            }
+              // Show notification about the consensus update
+            const message = isEstimatedItem 
+              ? `🎯 Moderator ${changedByName} updated final estimate to ${newConsensusValue}`
+              : `🎯 Moderator ${changedByName} set consensus to ${newConsensusValue}`;
+            setVoteNotification(message);
             setTimeout(() => setVoteNotification(null), 4000);
           }
         })
@@ -676,17 +697,24 @@ export default function VotingSession({
       }
     }
   }, [currentItem, sessionId, user]);
-
-  // Auto-reveal votes for estimated items
+  // Auto-reveal votes for estimated items and initialize moderator consensus
   useEffect(() => {
     if (currentItem?.status === 'Estimated') {
       console.log('🔍 Auto-revealing votes for estimated item:', currentItem.title);
       setIsRevealed(true);
+      
+      // Initialize moderator consensus with the stored story points for estimated items
+      if (currentItem.storyPoints !== undefined && currentItem.storyPoints !== null) {
+        setModeratorConsensus(String(currentItem.storyPoints));
+        console.log('🔍 Initialized moderator consensus for estimated item:', currentItem.storyPoints);
+      }
     } else {
       // Reset reveal state for non-estimated items
       setIsRevealed(false);
+      // Clear moderator consensus for non-estimated items
+      setModeratorConsensus(null);
     }
-  }, [currentItem?.id, currentItem?.status]);
+  }, [currentItem?.id, currentItem?.status, currentItem?.storyPoints]);
 
   // Helper function to detect vote changes
   const hasVoteChanges = (newEstimations: any[], currentVotes: Vote[]) => {
@@ -1677,7 +1705,6 @@ export default function VotingSession({
     setIsEditingConsensus(false);
     setEditedConsensusValue('');
   };
-
   const handleSaveConsensus = async () => {
     if (!currentItem || !user || !editedConsensusValue.trim() || consensusLoading) return;
     
@@ -1686,6 +1713,33 @@ export default function VotingSession({
     try {
       // Update local moderator consensus
       setModeratorConsensus(editedConsensusValue.trim());
+      
+      // For estimated items, update the database and session items
+      if (currentItem.status === 'Estimated') {
+        const updatedPoints = estimationType === 'fibonacci' 
+          ? parseFloat(editedConsensusValue.trim()) 
+          : editedConsensusValue.trim();
+        
+        // Update the database
+        await updateBacklogItem(currentItem.id, {
+          story_points: String(updatedPoints),
+          status: 'Estimated'
+        });
+        
+        // Update the session items array
+        setSessionItems(prevItems => 
+          prevItems.map(item => 
+            item.id === currentItem.id 
+              ? { ...item, storyPoints: updatedPoints }
+              : item
+          )
+        );
+        
+        console.log('✅ Updated estimated item in database:', {
+          itemId: currentItem.id,
+          newStoryPoints: updatedPoints
+        });
+      }
       
       // Broadcast consensus change to all participants
       if (channel && channelSubscribed) {
@@ -1699,7 +1753,8 @@ export default function VotingSession({
             newConsensusValue: editedConsensusValue.trim(),
             changedBy: user.id,
             changedByName: moderatorDisplayName,
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
+            isEstimatedItem: currentItem.status === 'Estimated'
           }
         };
         
@@ -1708,7 +1763,10 @@ export default function VotingSession({
         console.log('✅ Consensus change broadcast sent successfully');
         
         // Show local notification
-        setVoteNotification(`Consensus updated to ${editedConsensusValue.trim()}`);
+        const message = currentItem.status === 'Estimated' 
+          ? `Final estimate updated to ${editedConsensusValue.trim()}`
+          : `Consensus updated to ${editedConsensusValue.trim()}`;
+        setVoteNotification(message);
         setTimeout(() => setVoteNotification(null), 3000);
         
       } else {
