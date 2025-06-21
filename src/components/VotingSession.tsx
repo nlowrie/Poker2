@@ -1,13 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { BacklogItem, User, Vote } from '../types';
-import { Eye, EyeOff, SkipForward, CheckCircle, ArrowLeft, Users, Clock, Settings, MessageCircle, FileText, Video } from 'lucide-react';
+import { Eye, EyeOff, SkipForward, CheckCircle, ArrowLeft, Users, Clock, Settings, MessageCircle, FileText, Video, RotateCcw } from 'lucide-react';
 import VotingCards from './VotingCards';
 import UserIcon from './UserIcon';
 import Chat from './ChatPanel';
 import VideoConference from './VideoConference';
 import ErrorBoundary from './ErrorBoundary';
 import { calculateConsensus } from '../utils/planningPoker';
-import { submitEstimation, getEstimationsForItem, getUserVote, getSessionItems, getAllBacklogItems, updateBacklogItem } from '../utils/planningSession';
+import { submitEstimation, getEstimationsForItem, getUserVote, getSessionItems, getAllBacklogItems, updateBacklogItem, clearVotesForItem } from '../utils/planningSession';
 import { getUserDisplayName, getUserInitials, getUserInfoById } from '../utils/userUtils';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../supabaseClient';
@@ -561,6 +561,47 @@ export default function VotingSession({
               : `🎯 Moderator ${changedByName} set consensus to ${newConsensusValue}`;
             setVoteNotification(message);
             setTimeout(() => setVoteNotification(null), 4000);
+          }        })
+        .on('broadcast', { event: 'votes-reset' }, (payload) => {
+          console.log('📥 Received votes-reset broadcast:', payload);
+          const { itemId, resetBy, resetByName, timestamp } = payload.payload;
+          
+          // Get current item from refs to avoid stale closure
+          const currentSessionItems = sessionItemsRef.current;
+          const currentItemIndexValue = currentItemIndexRef.current;
+          const currentActiveItem = currentSessionItems[currentItemIndexValue];
+          
+          if (!currentActiveItem) {
+            console.log('🚫 No current item set, cannot process votes reset broadcast');
+            return;
+          }
+          
+          // Only update if the reset wasn't triggered by this user and it's for the current item
+          if (itemId === currentActiveItem.id && resetBy !== user?.id) {
+            console.log('🔄 Applying votes reset due to moderator action');
+            
+            // Reset local voting state
+            setMyVote(null);
+            setVotes([]);
+            setIsRevealed(false);
+            setTimerActive(false);
+            setTimeRemaining(null);
+            setModeratorConsensus(null);
+            setIsEditingConsensus(false);
+            setEditedConsensusValue('');
+            
+            console.log('✅ Local state reset complete');
+            
+            // Show notification about the reset
+            const message = resetByName 
+              ? `🔄 ${resetByName} reset all votes - voting can begin again`
+              : '🔄 All votes have been reset - voting can begin again';
+            setVoteNotification(message);
+            setTimeout(() => setVoteNotification(null), 4000);
+          } else if (resetBy === user?.id) {
+            console.log('⏭️ Skipping votes reset broadcast (own action)');
+          } else {
+            console.log('⏭️ Skipping votes reset broadcast (different item)');
           }
         })
         .on('presence', { event: 'sync' }, () => {
@@ -1311,9 +1352,63 @@ export default function VotingSession({
       setTimeout(() => setVoteNotification(null), 3000);
     }
   };
-
   const handleSkip = () => {
     nextItem();
+  };
+
+  // Handle reset votes for the current item (moderator only)
+  const handleResetVotes = async () => {
+    if (!currentItem || !user || currentUser.role !== 'Moderator') return;
+    
+    try {
+      console.log('🔄 Resetting votes for item:', currentItem.id);
+      
+      // Clear all votes from the database
+      await clearVotesForItem(sessionId, currentItem.id);
+      
+      // Reset local state
+      setMyVote(null);
+      setVotes([]);
+      setIsRevealed(false);
+      setTimerActive(false);
+      setTimeRemaining(null);
+      setModeratorConsensus(null);
+      setIsEditingConsensus(false);
+      setEditedConsensusValue('');
+      
+      console.log('✅ Votes reset successfully for item:', currentItem.title);
+      
+      // Broadcast reset to all participants
+      if (channel && channelSubscribed) {
+        const resetPayload = {
+          type: 'broadcast',
+          event: 'votes-reset',
+          payload: {
+            itemId: currentItem.id,
+            resetBy: user.id,
+            resetByName: getUserDisplayName(user),
+            timestamp: new Date().toISOString()
+          }
+        };
+        
+        console.log('📡 Broadcasting votes reset to all participants:', resetPayload);
+        
+        channel.send(resetPayload).then((result: any) => {
+          console.log('✅ Reset broadcast sent successfully:', result);
+        }).catch((error: any) => {
+          console.error('❌ Reset broadcast failed:', error);
+        });
+      }
+      
+      // Show success notification
+      setVoteNotification(`🔄 All votes reset for "${currentItem.title}" - voting can begin again`);
+      setTimeout(() => setVoteNotification(null), 4000);
+      
+    } catch (error) {
+      console.error('Error resetting votes:', error);
+      setVoteNotification('Error resetting votes. Please try again.');
+      setTimeout(() => setVoteNotification(null), 3000);
+    }
   };
 
   // Handle estimation type change with real-time sync
@@ -2497,8 +2592,7 @@ export default function VotingSession({
                         💡 Click the edit icon to override the consensus value
                       </div>
                     )}
-                  </div>                  
-                  {currentUser.role === 'Moderator' && currentItem?.status !== 'Estimated' && (
+                  </div>                    {currentUser.role === 'Moderator' && currentItem?.status !== 'Estimated' && (
                     <div className="flex gap-3 justify-center">
                       <button
                         onClick={handleAcceptEstimate}
@@ -2513,6 +2607,14 @@ export default function VotingSession({
                       >
                         <SkipForward className="w-4 h-4" />
                         Skip for Now
+                      </button>
+                      <button
+                        onClick={handleResetVotes}
+                        className="bg-orange-600 text-white px-4 py-2 rounded-lg hover:bg-orange-700 transition-colors duration-200 flex items-center gap-2"
+                        title="Reset all votes for this item - clears votes and allows voting to restart"
+                      >
+                        <RotateCcw className="w-4 h-4" />
+                        Reset Votes
                       </button>
                     </div>
                   )}
