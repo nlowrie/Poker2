@@ -2508,9 +2508,8 @@ export default function VotingSession({
                         💡 Click the edit icon to override the consensus value
                       </div>
                     )}
-                  </div>
-                  
-                  {currentUser.role === 'Moderator' && (
+                  </div>                  
+                  {currentUser.role === 'Moderator' && currentItem?.status !== 'Estimated' && (
                     <div className="flex gap-3 justify-center">
                       <button
                         onClick={handleAcceptEstimate}
