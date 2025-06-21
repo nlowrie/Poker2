@@ -1,6 +1,12 @@
-export const FIBONACCI_SEQUENCE = [0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89];
+export const FIBONACCI_SEQUENCE = [0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, -1, -2];
 
 export const TSHIRT_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
+
+// Special card values for Fibonacci sequence
+export const SPECIAL_CARDS = {
+  NEED_INFO: -1,
+  TOO_BIG: -2
+} as const;
 
 export const CARD_LABELS: { [key: number]: string } = {
   0: '0',
@@ -13,7 +19,9 @@ export const CARD_LABELS: { [key: number]: string } = {
   21: '21',
   34: '34',
   55: '55',
-  89: '89'
+  89: '89',
+  [-1]: 'Need Info',
+  [-2]: 'Too Big'
 };
 
 export const TSHIRT_VALUES: { [key: string]: number } = {
@@ -29,19 +37,39 @@ export function calculateConsensus(votes: (number | string)[], estimationType: '
   consensus: number | string | null;
   average: number;
   hasConsensus: boolean;
+  hasSpecialCards: boolean;
+  specialCardCounts: { needInfo: number; tooBig: number };
+  validVotesCount: number;
 } {
   if (votes.length === 0) {
-    return { consensus: null, average: 0, hasConsensus: false };
+    return { 
+      consensus: null, 
+      average: 0, 
+      hasConsensus: false,
+      hasSpecialCards: false,
+      specialCardCounts: { needInfo: 0, tooBig: 0 },
+      validVotesCount: 0
+    };
   }
+
+  // Count special cards
+  const needInfoCount = votes.filter(vote => vote === SPECIAL_CARDS.NEED_INFO).length;
+  const tooBigCount = votes.filter(vote => vote === SPECIAL_CARDS.TOO_BIG).length;
+  const hasSpecialCards = needInfoCount > 0 || tooBigCount > 0;
+
+  // Filter out special cards for consensus calculation
+  const validVotes = votes.filter(vote => 
+    vote !== SPECIAL_CARDS.NEED_INFO && vote !== SPECIAL_CARDS.TOO_BIG
+  );
 
   let numericVotes: number[];
   
   if (estimationType === 'tshirt') {
-    numericVotes = votes.map(vote => 
+    numericVotes = validVotes.map(vote => 
       typeof vote === 'string' ? TSHIRT_VALUES[vote] || 0 : vote as number
     );
   } else {
-    numericVotes = votes.map(vote => {
+    numericVotes = validVotes.map(vote => {
       if (typeof vote === 'number') return vote;
       if (typeof vote === 'string') {
         const numValue = parseFloat(vote);
@@ -51,15 +79,21 @@ export function calculateConsensus(votes: (number | string)[], estimationType: '
     });
   }
 
-  const average = numericVotes.reduce((sum, vote) => sum + vote, 0) / numericVotes.length;
-  const uniqueVotes = new Set(votes);
+  // Calculate average only from valid votes
+  const average = numericVotes.length > 0 
+    ? numericVotes.reduce((sum, vote) => sum + vote, 0) / numericVotes.length 
+    : 0;
   
-  // Consensus if all votes are the same or within acceptable range
-  const hasConsensus = uniqueVotes.size === 1 || 
-    (uniqueVotes.size === 2 && isAdjacentEstimate(Array.from(uniqueVotes), estimationType));
+  const uniqueValidVotes = new Set(validVotes);
+  
+  // Consensus if all valid votes are the same or within acceptable range
+  // No consensus if there are special cards
+  const hasConsensus = !hasSpecialCards && 
+    (uniqueValidVotes.size === 1 || 
+    (uniqueValidVotes.size === 2 && isAdjacentEstimate(Array.from(uniqueValidVotes), estimationType)));
   
   let consensus: number | string | null = null;
-  if (hasConsensus) {
+  if (hasConsensus && validVotes.length > 0) {
     if (estimationType === 'tshirt') {
       // Find the closest T-shirt size to the average
       const closestValue = Object.entries(TSHIRT_VALUES)
@@ -72,7 +106,14 @@ export function calculateConsensus(votes: (number | string)[], estimationType: '
     }
   }
   
-  return { consensus, average, hasConsensus };
+  return { 
+    consensus, 
+    average, 
+    hasConsensus,
+    hasSpecialCards,
+    specialCardCounts: { needInfo: needInfoCount, tooBig: tooBigCount },
+    validVotesCount: validVotes.length
+  };
 }
 
 function isAdjacentEstimate(votes: (number | string)[], estimationType: 'fibonacci' | 'tshirt'): boolean {

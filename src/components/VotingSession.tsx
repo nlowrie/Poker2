@@ -6,7 +6,7 @@ import UserIcon from './UserIcon';
 import Chat from './ChatPanel';
 import VideoConference from './VideoConference';
 import ErrorBoundary from './ErrorBoundary';
-import { calculateConsensus } from '../utils/planningPoker';
+import { calculateConsensus, CARD_LABELS, SPECIAL_CARDS } from '../utils/planningPoker';
 import { submitEstimation, getEstimationsForItem, getUserVote, getSessionItems, getAllBacklogItems, updateBacklogItem, clearVotesForItem } from '../utils/planningSession';
 import { getUserDisplayName, getUserInitials, getUserInfoById } from '../utils/userUtils';
 import { useAuth } from '../context/AuthContext';
@@ -403,20 +403,42 @@ export default function VotingSession({
               broadcast_voter_id: voterId
             });
           }
-        })
-        .on('broadcast', { event: 'item-changed' }, (payload) => {
+        })        .on('broadcast', { event: 'item-changed' }, (payload) => {
           const { newItemIndex, changedBy } = payload.payload;
           // Only update if the change wasn't made by this user
           if (changedBy !== user?.id) {
             setCurrentItemIndex(newItemIndex);
-            resetForNewItem();
+            
+            // Get the new item from session items to check if it's estimated
+            const newItem = sessionItemsRef.current[newItemIndex];
+            
+            if (newItem?.status === 'Estimated') {
+              // For estimated items, don't fully reset - keep reveal state and set moderator consensus
+              setMyVote(null);
+              setVotes([]);
+              setTimerActive(false);
+              setTimeRemaining(null);              setIsEditingConsensus(false);
+              setEditedConsensusValue('');
+              
+              // Auto-reveal votes and set moderator consensus for estimated items
+              setIsRevealed(true);
+              if (newItem.storyPoints !== undefined && newItem.storyPoints !== null) {
+                setModeratorConsensus(String(newItem.storyPoints));
+              }
+              
+              console.log('🔍 Auto-revealing votes for estimated item on navigation:', newItem.title);
+            } else {
+              // For non-estimated items, do a full reset
+              resetForNewItem();
+            }
+            
             // Show notification for team members
             if (currentUser.role === 'Team Member') {
               setVoteNotification('Moderator moved to a new item');
               setTimeout(() => setVoteNotification(null), 3000);
             }
           }
-        })        .on('broadcast', { event: 'votes-revealed' }, (payload) => {
+        }).on('broadcast', { event: 'votes-revealed' }, (payload) => {
           console.log('🎯 VOTES-REVEALED BROADCAST RECEIVED:', payload);
           
           const { 
@@ -1876,7 +1898,7 @@ export default function VotingSession({
     }
     return v.points;
   });
-  const { consensus, average, hasConsensus } = calculateConsensus(voteValues, estimationType);
+  const { consensus, average, hasConsensus, hasSpecialCards, specialCardCounts, validVotesCount } = calculateConsensus(voteValues, estimationType);
 
   // Timer configuration functions
   const handleTimerConfigSave = () => {
@@ -2440,12 +2462,17 @@ export default function VotingSession({
               <div className="mt-4 bg-white rounded-xl p-4 shadow-lg border border-gray-200">
                 <div className="flex items-center justify-between">
                   <span className="font-medium text-gray-900">Your Vote:</span>
-                  <div className="flex items-center gap-3">
-                    <span className={`px-3 py-1 rounded-lg font-bold ${
-                      estimationType === 'fibonacci' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'
-                    }`}>
-                      {myVote}
-                    </span>                    {!isRevealed && !loading && currentItem?.status !== 'Estimated' && (
+                  <div className="flex items-center gap-3">                    <span className={`px-3 py-1 rounded-lg font-bold ${
+                      estimationType === 'fibonacci' 
+                        ? Number(myVote) === SPECIAL_CARDS.NEED_INFO || Number(myVote) === SPECIAL_CARDS.TOO_BIG
+                          ? 'bg-yellow-100 text-yellow-800'
+                          : 'bg-blue-100 text-blue-800'
+                        : 'bg-purple-100 text-purple-800'
+                    }`}>{estimationType === 'fibonacci' && CARD_LABELS[Number(myVote)]
+                        ? CARD_LABELS[Number(myVote)]
+                        : myVote
+                      }
+                    </span>{!isRevealed && !loading && currentItem?.status !== 'Estimated' && (
                       <span className="text-sm text-gray-500">(You can change this)</span>
                     )}
                     {!isRevealed && !loading && currentItem?.status === 'Estimated' && (
@@ -2588,17 +2615,21 @@ export default function VotingSession({
                       <span className="text-xs text-gray-400">
                         {new Date(vote.timestamp).toLocaleTimeString()}
                       </span>
-                    )}
-                    <div className={`
-                      px-3 py-1 rounded-lg font-bold transition-all duration-300
-                      ${isRevealed 
+                    )}                    <div className={`
+                      px-3 py-1 rounded-lg font-bold transition-all duration-300                      ${isRevealed 
                         ? estimationType === 'fibonacci' 
-                          ? 'bg-blue-100 text-blue-800' 
+                          ? Number(vote.points) === SPECIAL_CARDS.NEED_INFO || Number(vote.points) === SPECIAL_CARDS.TOO_BIG
+                            ? 'bg-yellow-100 text-yellow-800'
+                            : 'bg-blue-100 text-blue-800'
                           : 'bg-purple-100 text-purple-800'
                         : 'bg-gray-300 text-gray-300'
                       }
-                    `}>
-                      {isRevealed ? vote.points : '?'}
+                    `}>                      {isRevealed 
+                        ? estimationType === 'fibonacci' && CARD_LABELS[Number(vote.points)]
+                          ? CARD_LABELS[Number(vote.points)]
+                          : vote.points
+                        : '?'
+                      }
                     </div>
                   </div>
                 </div>
@@ -2694,14 +2725,46 @@ export default function VotingSession({
                       </div>
                     </div>
                   )}                  <div className="text-sm text-gray-600 mb-4">
-                    {hasConsensus ? (
+                    {hasSpecialCards && (
+                      <div className="mb-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                        <div className="flex items-center gap-2 text-yellow-800 font-medium mb-2">
+                          ⚠️ Special Cards Detected
+                        </div>
+                        <div className="text-xs text-yellow-700 space-y-1">
+                          {specialCardCounts.needInfo > 0 && (
+                            <div>• {specialCardCounts.needInfo} participant{specialCardCounts.needInfo > 1 ? 's' : ''} need{specialCardCounts.needInfo === 1 ? 's' : ''} more information</div>
+                          )}
+                          {specialCardCounts.tooBig > 0 && (
+                            <div>• {specialCardCounts.tooBig} participant{specialCardCounts.tooBig > 1 ? 's' : ''} think{specialCardCounts.tooBig === 1 ? 's' : ''} the estimation is too big</div>
+                          )}
+                          <div className="mt-2 font-medium">💡 Consider discussing the requirements or breaking down the story before proceeding</div>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {hasConsensus && !hasSpecialCards ? (
                       <span className="text-green-600 font-medium">✓ Team Consensus</span>
-                    ) : (
+                    ) : validVotesCount > 0 && !hasSpecialCards ? (
                       <span className="text-orange-600 font-medium">
                         {estimationType === 'fibonacci' 
                           ? `Average: ${average.toFixed(1)} - Discussion needed`
                           : 'Mixed estimates - Discussion needed'
                         }
+                      </span>
+                    ) : hasSpecialCards && validVotesCount > 0 ? (
+                      <span className="text-yellow-600 font-medium">
+                        {estimationType === 'fibonacci' 
+                          ? `Average of ${validVotesCount} numerical vote${validVotesCount > 1 ? 's' : ''}: ${average.toFixed(1)}`
+                          : `${validVotesCount} numerical vote${validVotesCount > 1 ? 's' : ''} received`
+                        }
+                      </span>
+                    ) : hasSpecialCards && validVotesCount === 0 ? (
+                      <span className="text-red-600 font-medium">
+                        No numerical estimates - discussion required
+                      </span>
+                    ) : (
+                      <span className="text-gray-500">
+                        Waiting for estimates...
                       </span>
                     )}
                     {currentUser.role === 'Moderator' && !isEditingConsensus && (
@@ -2709,7 +2772,7 @@ export default function VotingSession({
                         💡 Click the edit icon to override the consensus value
                       </div>
                     )}
-                  </div>                    {currentUser.role === 'Moderator' && currentItem?.status !== 'Estimated' && (
+                  </div>{currentUser.role === 'Moderator' && currentItem?.status !== 'Estimated' && (
                     <div className="flex gap-3 justify-center">
                       <button
                         onClick={handleAcceptEstimate}
