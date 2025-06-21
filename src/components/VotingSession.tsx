@@ -2058,18 +2058,28 @@ export default function VotingSession({
               </div>
             </div>
           )}
-          
-          <div className="bg-gray-50 rounded-xl p-6">
+            <div className="bg-gray-50 rounded-xl p-6">
             <div className="flex items-start justify-between mb-3">
               <h1 className="text-2xl font-bold text-gray-900">{currentItem.title}</h1>
-              <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                currentItem.priority === 'Critical' ? 'bg-red-100 text-red-800' :
-                currentItem.priority === 'High' ? 'bg-orange-100 text-orange-800' :
-                currentItem.priority === 'Medium' ? 'bg-yellow-100 text-yellow-800' :
-                'bg-green-100 text-green-800'
-              }`}>
-                {currentItem.priority} Priority
-              </span>
+              <div className="flex items-center gap-3">
+                {currentItem.status === 'Estimated' && (
+                  <div className="flex items-center gap-2 bg-green-100 text-green-800 px-3 py-1 rounded-lg">
+                    <CheckCircle className="w-5 h-5" />
+                    <span className="font-medium">Estimated</span>
+                    {currentItem.storyPoints && (
+                      <span>({currentItem.storyPoints}{currentItem.estimationType === 'fibonacci' ? ' SP' : ''})</span>
+                    )}
+                  </div>
+                )}
+                <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                  currentItem.priority === 'Critical' ? 'bg-red-100 text-red-800' :
+                  currentItem.priority === 'High' ? 'bg-orange-100 text-orange-800' :
+                  currentItem.priority === 'Medium' ? 'bg-yellow-100 text-yellow-800' :
+                  'bg-green-100 text-green-800'
+                }`}>
+                  {currentItem.priority} Priority
+                </span>
+              </div>
             </div>
             <p className="text-gray-700 mb-4">{currentItem.description}</p>
             
@@ -2207,53 +2217,10 @@ export default function VotingSession({
 
         <div className="grid lg:grid-cols-2 gap-6">
           {/* Voting Cards */}
-          <div>
-            {/* Story Information */}
-            {currentItem && (
-              <div className="mb-6 bg-white rounded-xl p-4 shadow-lg border border-gray-200">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-semibold text-gray-900">{currentItem.title}</h3>
-                  {currentItem.status === 'Estimated' && (
-                    <div className="flex items-center gap-2 bg-green-100 text-green-800 px-3 py-1 rounded-lg">
-                      <CheckCircle className="w-4 h-4" />
-                      <span className="text-sm font-medium">Estimated</span>
-                      {currentItem.storyPoints && (
-                        <span className="text-sm">({currentItem.storyPoints}{currentItem.estimationType === 'fibonacci' ? ' SP' : ''})</span>
-                      )}
-                    </div>
-                  )}
-                </div>
-                
-                {currentItem.description && (
-                  <p className="text-gray-600 text-sm mb-3">{currentItem.description}</p>
-                )}
-                
-                {currentItem.acceptanceCriteria && currentItem.acceptanceCriteria.length > 0 && (
-                  <div className="mb-3">
-                    <h4 className="font-medium text-gray-800 mb-2 text-sm">Acceptance Criteria:</h4>
-                    <ul className="list-disc list-inside space-y-1">
-                      {currentItem.acceptanceCriteria.map((criteria: string, index: number) => (
-                        <li key={index} className="text-xs text-gray-600">{criteria}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                
-                <div className="flex items-center gap-3 text-xs">
-                  <span className="bg-gray-100 text-gray-700 px-2 py-1 rounded">
-                    Priority: {currentItem.priority || 'Medium'}
-                  </span>
-                  <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded">
-                    Type: {estimationType === 'fibonacci' ? 'Story Points' : 'T-Shirt Sizes'}
-                  </span>
-                </div>
-              </div>
-            )}
-            
-            <VotingCards
+          <div>            <VotingCards
               onVote={handleVote}
               selectedVote={myVote}
-              disabled={loading}
+              disabled={loading || currentItem?.status === 'Estimated'}
               estimationType={estimationType}
             />
             {/* User's Vote Display */}
@@ -2266,10 +2233,12 @@ export default function VotingSession({
                       estimationType === 'fibonacci' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'
                     }`}>
                       {myVote}
-                    </span>
-                    {!isRevealed && !loading && (
+                    </span>                    {!isRevealed && !loading && currentItem?.status !== 'Estimated' && (
                       <span className="text-sm text-gray-500">(You can change this)</span>
-                    )}                    {isRevealed && !loading && (
+                    )}
+                    {!isRevealed && !loading && currentItem?.status === 'Estimated' && (
+                      <span className="text-sm text-green-600">(Item already estimated)</span>
+                    )}                    {isRevealed && !loading && currentItem?.status !== 'Estimated' && (
                       <button
                         onClick={() => {
                           setMyVote(null);
@@ -2282,6 +2251,9 @@ export default function VotingSession({
                         ✏️ Edit Vote
                       </button>
                     )}
+                    {isRevealed && !loading && currentItem?.status === 'Estimated' && (
+                      <span className="text-sm text-green-600 font-medium">✓ Estimate Finalized</span>
+                    )}
                     {loading && (
                       <div className="flex items-center gap-2 text-sm text-blue-600">
                         <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
@@ -2289,15 +2261,19 @@ export default function VotingSession({
                       </div>
                     )}
                   </div>
-                </div>
-                {isRevealed && (
+                </div>                {isRevealed && currentItem?.status !== 'Estimated' && (
                   <div className="mt-2 text-xs text-gray-500">
                     💡 You can edit your vote even after reveal - changes will be shown to all participants
                   </div>
                 )}
+                {isRevealed && currentItem?.status === 'Estimated' && (
+                  <div className="mt-2 text-xs text-green-600">
+                    ✓ This item has been finalized with an accepted estimate
+                  </div>
+                )}
               </div>
             )}            {/* Vote submission instructions */}
-            {!myVote && (
+            {!myVote && currentItem?.status !== 'Estimated' && (
               <div className={`mt-4 rounded-xl p-4 ${
                 isRevealed 
                   ? 'bg-green-50 border border-green-200' 
@@ -2321,6 +2297,19 @@ export default function VotingSession({
                     🎯 Your new vote will be saved and all participants will see the updated results
                   </div>
                 )}
+              </div>
+            )}
+            {!myVote && currentItem?.status === 'Estimated' && (
+              <div className="mt-4 rounded-xl p-4 bg-gray-50 border border-gray-200">
+                <div className="flex items-center gap-2 text-gray-600">
+                  <CheckCircle className="w-4 h-4 text-green-600" />
+                  <span className="font-medium text-sm">
+                    This item has been finalized with an accepted estimate
+                  </span>
+                </div>
+                <div className="mt-2 text-xs text-gray-500">
+                  Voting is no longer available for estimated items
+                </div>
               </div>
             )}
           </div>
