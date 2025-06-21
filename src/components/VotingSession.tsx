@@ -564,7 +564,7 @@ export default function VotingSession({
           }        })
         .on('broadcast', { event: 'votes-reset' }, (payload) => {
           console.log('📥 Received votes-reset broadcast:', payload);
-          const { itemId, resetBy, resetByName, timestamp } = payload.payload;
+          const { itemId, resetBy, resetByName } = payload.payload;
           
           // Get current item from refs to avoid stale closure
           const currentSessionItems = sessionItemsRef.current;
@@ -599,9 +599,57 @@ export default function VotingSession({
             setVoteNotification(message);
             setTimeout(() => setVoteNotification(null), 4000);
           } else if (resetBy === user?.id) {
-            console.log('⏭️ Skipping votes reset broadcast (own action)');
-          } else {
+            console.log('⏭️ Skipping votes reset broadcast (own action)');          } else {
             console.log('⏭️ Skipping votes reset broadcast (different item)');
+          }
+        })
+        .on('broadcast', { event: 'estimation-reset' }, (payload) => {
+          console.log('📥 Received estimation-reset broadcast:', payload);
+          const { itemId, resetBy, resetByName } = payload.payload;
+          
+          // Get current item from refs to avoid stale closure
+          const currentSessionItems = sessionItemsRef.current;
+          const currentItemIndexValue = currentItemIndexRef.current;
+          const currentActiveItem = currentSessionItems[currentItemIndexValue];
+          
+          if (!currentActiveItem) {
+            console.log('🚫 No current item set, cannot process estimation reset broadcast');
+            return;
+          }
+          
+          // Only update if the reset wasn't triggered by this user and it's for the current item
+          if (itemId === currentActiveItem.id && resetBy !== user?.id) {
+            console.log('🔄 Applying estimation reset due to moderator action');
+            
+            // Reset local voting state
+            setMyVote(null);
+            setVotes([]);
+            setIsRevealed(false);
+            setTimerActive(false);
+            setTimeRemaining(null);
+            setModeratorConsensus(null);
+            setIsEditingConsensus(false);
+            setEditedConsensusValue('');
+            
+            // Update session items to reflect the status change
+            setSessionItems(prev => prev.map(item => 
+              item.id === itemId 
+                ? { ...item, status: 'Pending', storyPoints: undefined }
+                : item
+            ));
+            
+            console.log('✅ Local state reset complete - item returned to pending');
+            
+            // Show notification about the reset
+            const message = resetByName 
+              ? `🔄 ${resetByName} reset the estimation - item returned to pending status`
+              : '🔄 The estimation has been reset - item returned to pending status';
+            setVoteNotification(message);
+            setTimeout(() => setVoteNotification(null), 4000);
+          } else if (resetBy === user?.id) {
+            console.log('⏭️ Skipping estimation reset broadcast (own action)');
+          } else {
+            console.log('⏭️ Skipping estimation reset broadcast (different item)');
           }
         })
         .on('presence', { event: 'sync' }, () => {
@@ -1407,6 +1455,75 @@ export default function VotingSession({
     } catch (error) {
       console.error('Error resetting votes:', error);
       setVoteNotification('Error resetting votes. Please try again.');
+      setTimeout(() => setVoteNotification(null), 3000);    }
+  };
+
+  // Handle reset estimated ticket - removes final estimate and all votes (moderator only)
+  const handleResetEstimatedTicket = async () => {
+    if (!currentItem || !user || currentUser.role !== 'Moderator' || currentItem.status !== 'Estimated') return;
+    
+    try {
+      console.log('🔄 Resetting estimated ticket:', currentItem.id);
+      
+      // Clear all votes from the database
+      await clearVotesForItem(sessionId, currentItem.id);
+      
+      // Reset the backlog item status to 'Pending' and clear story points
+      const updatedItem = await updateBacklogItem(currentItem.id, {
+        status: 'Pending',
+        story_points: undefined
+      });
+      
+      console.log('✅ Backlog item reset to pending:', updatedItem);
+      
+      // Reset local state
+      setMyVote(null);
+      setVotes([]);
+      setIsRevealed(false);
+      setTimerActive(false);
+      setTimeRemaining(null);
+      setModeratorConsensus(null);
+      setIsEditingConsensus(false);
+      setEditedConsensusValue('');
+      
+      // Update session items to reflect the status change
+      setSessionItems(prev => prev.map(item => 
+        item.id === currentItem.id 
+          ? { ...item, status: 'Pending', storyPoints: undefined }
+          : item
+      ));
+      
+      console.log('✅ Estimated ticket reset successfully for item:', currentItem.title);
+      
+      // Broadcast reset to all participants
+      if (channel && channelSubscribed) {
+        const resetPayload = {
+          type: 'broadcast',
+          event: 'estimation-reset',
+          payload: {
+            itemId: currentItem.id,
+            resetBy: user.id,
+            resetByName: getUserDisplayName(user),
+            timestamp: new Date().toISOString()
+          }
+        };
+        
+        console.log('📡 Broadcasting estimation reset to all participants:', resetPayload);
+        
+        channel.send(resetPayload).then((result: any) => {
+          console.log('✅ Estimation reset broadcast sent successfully:', result);
+        }).catch((error: any) => {
+          console.error('❌ Estimation reset broadcast failed:', error);
+        });
+      }
+      
+      // Show success notification
+      setVoteNotification(`🔄 Estimation reset for "${currentItem.title}" - item returned to pending status`);
+      setTimeout(() => setVoteNotification(null), 4000);
+      
+    } catch (error) {
+      console.error('Error resetting estimated ticket:', error);
+      setVoteNotification('Error resetting estimated ticket. Please try again.');
       setTimeout(() => setVoteNotification(null), 3000);
     }
   };
@@ -2614,7 +2731,20 @@ export default function VotingSession({
                         title="Reset all votes for this item - clears votes and allows voting to restart"
                       >
                         <RotateCcw className="w-4 h-4" />
-                        Reset Votes
+                        Reset Votes                      </button>
+                    </div>
+                  )}
+                  
+                  {/* Moderator actions for estimated items */}
+                  {currentUser.role === 'Moderator' && currentItem?.status === 'Estimated' && (
+                    <div className="flex gap-3 justify-center">
+                      <button
+                        onClick={handleResetEstimatedTicket}
+                        className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors duration-200 flex items-center gap-2"
+                        title="Reset this estimated ticket - removes final estimate and all votes, returns item to pending status"
+                      >
+                        <RotateCcw className="w-4 h-4" />
+                        Reset Estimated Ticket
                       </button>
                     </div>
                   )}
