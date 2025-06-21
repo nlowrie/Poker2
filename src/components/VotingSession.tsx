@@ -50,8 +50,11 @@ export default function VotingSession({
     lastSeen: Date;
   }>>([]);
   const [isChatVisible, setIsChatVisible] = useState(false);
-  const [chatUnreadCount, setChatUnreadCount] = useState(0);
-  const [isVideoCallActive, setIsVideoCallActive] = useState(false);
+  const [chatUnreadCount, setChatUnreadCount] = useState(0);  const [isVideoCallActive, setIsVideoCallActive] = useState(false);
+  const [moderatorConsensus, setModeratorConsensus] = useState<string | null>(null);
+  const [isEditingConsensus, setIsEditingConsensus] = useState(false);
+  const [editedConsensusValue, setEditedConsensusValue] = useState<string>('');
+  const [consensusLoading, setConsensusLoading] = useState(false);
 
   // Refs to access current state in broadcast handlers
   const sessionItemsRef = useRef(sessionItems);
@@ -512,6 +515,31 @@ export default function VotingSession({
               setVoteNotification(`⚙️ ${changedByName} configured timer to ${timeDisplay}`);
               setTimeout(() => setVoteNotification(null), 4000);
             }
+          }        })
+        .on('broadcast', { event: 'consensus-changed' }, (payload) => {
+          console.log('📥 Received consensus-changed broadcast:', payload);
+          const { itemId, newConsensusValue, changedBy, changedByName } = payload.payload;
+          
+          // Get current item from refs to avoid stale closure
+          const currentSessionItems = sessionItemsRef.current;
+          const currentItemIndexValue = currentItemIndexRef.current;
+          const currentActiveItem = currentSessionItems[currentItemIndexValue];
+          
+          if (!currentActiveItem) {
+            console.log('🚫 No current item set, cannot process consensus change broadcast');
+            return;
+          }
+          
+          // Only update if the change wasn't made by this user and it's for the current item
+          if (itemId === currentActiveItem.id && changedBy !== user?.id) {
+            console.log('🔄 Updating consensus due to moderator change');
+            
+            // Update the moderator consensus for this participant
+            setModeratorConsensus(newConsensusValue);
+            
+            // Show notification about the consensus update
+            setVoteNotification(`🎯 Moderator ${changedByName} set consensus to ${newConsensusValue}`);
+            setTimeout(() => setVoteNotification(null), 4000);
           }
         })
         .on('presence', { event: 'sync' }, () => {
@@ -1187,14 +1215,15 @@ export default function VotingSession({
         });
       }
     }
-  };
-
-  const resetForNewItem = () => {
+  };  const resetForNewItem = () => {
     setIsRevealed(false);
     setMyVote(null);
     setVotes([]);
     setTimerActive(false);
     setTimeRemaining(null);
+    setModeratorConsensus(null); // Clear moderator consensus for new item
+    setIsEditingConsensus(false); // Exit edit mode if active
+    setEditedConsensusValue(''); // Clear edit value
   };
 
   const handleAcceptEstimate = async () => {
@@ -1537,7 +1566,72 @@ export default function VotingSession({
 
   const handleTimerConfigCancel = () => {
     setTempTimeLimit(votingTimeLimit);
-    setShowTimerConfig(false);
+    setShowTimerConfig(false);  };
+
+  // Consensus editing functions
+  const handleStartConsensusEdit = () => {
+    if (currentUser.role !== 'Moderator') return;
+    
+    const currentValue = moderatorConsensus || consensus || (estimationType === 'fibonacci' ? average.toFixed(1) : 'M');
+    setEditedConsensusValue(String(currentValue));
+    setIsEditingConsensus(true);
+  };
+
+  const handleCancelConsensusEdit = () => {
+    setIsEditingConsensus(false);
+    setEditedConsensusValue('');
+  };
+
+  const handleSaveConsensus = async () => {
+    if (!currentItem || !user || !editedConsensusValue.trim() || consensusLoading) return;
+    
+    setConsensusLoading(true);
+    
+    try {
+      // Update local moderator consensus
+      setModeratorConsensus(editedConsensusValue.trim());
+      
+      // Broadcast consensus change to all participants
+      if (channel && channelSubscribed) {
+        const moderatorDisplayName = getUserDisplayName(user);
+        
+        const broadcastPayload = {
+          type: 'broadcast',
+          event: 'consensus-changed',
+          payload: {
+            itemId: currentItem.id,
+            newConsensusValue: editedConsensusValue.trim(),
+            changedBy: user.id,
+            changedByName: moderatorDisplayName,
+            timestamp: new Date().toISOString()
+          }
+        };
+        
+        console.log('📡 Broadcasting consensus change:', broadcastPayload);
+        await channel.send(broadcastPayload);
+        console.log('✅ Consensus change broadcast sent successfully');
+        
+        // Show local notification
+        setVoteNotification(`Consensus updated to ${editedConsensusValue.trim()}`);
+        setTimeout(() => setVoteNotification(null), 3000);
+        
+      } else {
+        console.error('❌ Cannot broadcast consensus change - channel not ready');
+        setVoteNotification('Error: Unable to broadcast consensus change');
+        setTimeout(() => setVoteNotification(null), 3000);
+      }
+      
+      // Exit edit mode
+      setIsEditingConsensus(false);
+      setEditedConsensusValue('');
+      
+    } catch (error: any) {
+      console.error('Error saving consensus:', error);
+      setVoteNotification('Error saving consensus. Please try again.');
+      setTimeout(() => setVoteNotification(null), 3000);
+    } finally {
+      setConsensusLoading(false);
+    }
   };
 
   // Predefined timer options
@@ -2077,11 +2171,69 @@ export default function VotingSession({
                   : 'bg-gradient-to-r from-purple-50 to-pink-50 border-purple-200'
               }`}>                <div className="text-center">
                   <div className="text-sm text-gray-600 mb-2">Estimation Result</div>
-                  <div className="text-3xl font-bold text-gray-900 mb-2">
-                    {consensus || (estimationType === 'fibonacci' ? average.toFixed(1) : 'M')}
-                    {estimationType === 'fibonacci' ? ' SP' : ''}
-                  </div>
-                  <div className="text-sm text-gray-600 mb-4">
+                  
+                  {/* Consensus Display/Edit */}
+                  {isEditingConsensus && currentUser.role === 'Moderator' ? (
+                    <div className="mb-4">
+                      <input
+                        type="text"
+                        value={editedConsensusValue}
+                        onChange={(e) => setEditedConsensusValue(e.target.value)}
+                        className="text-3xl font-bold text-gray-900 text-center bg-white border-2 border-blue-500 rounded-lg px-4 py-2 w-32 mx-auto block"
+                        placeholder="8"
+                        autoFocus
+                        disabled={consensusLoading}
+                      />
+                      <div className="text-sm text-gray-600 mt-2">
+                        {estimationType === 'fibonacci' ? 'Enter story points' : 'Enter T-shirt size'}
+                      </div>
+                      <div className="flex gap-2 justify-center mt-3">
+                        <button
+                          onClick={handleSaveConsensus}
+                          disabled={consensusLoading || !editedConsensusValue.trim()}
+                          className="bg-green-600 text-white px-3 py-1 rounded-lg hover:bg-green-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                        >
+                          {consensusLoading ? (
+                            <>
+                              <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
+                              Saving...
+                            </>
+                          ) : (
+                            <>
+                              ✓ Save
+                            </>
+                          )}
+                        </button>
+                        <button
+                          onClick={handleCancelConsensusEdit}
+                          disabled={consensusLoading}
+                          className="bg-gray-500 text-white px-3 py-1 rounded-lg hover:bg-gray-600 transition-colors text-sm font-medium disabled:opacity-50"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mb-2">
+                      <div className="text-3xl font-bold text-gray-900 mb-2 flex items-center justify-center gap-2">
+                        <span>
+                          {moderatorConsensus || consensus || (estimationType === 'fibonacci' ? average.toFixed(1) : 'M')}
+                          {estimationType === 'fibonacci' ? ' SP' : ''}
+                        </span>
+                        {currentUser.role === 'Moderator' && (
+                          <button
+                            onClick={handleStartConsensusEdit}
+                            className="ml-2 text-blue-600 hover:text-blue-700 transition-colors"
+                            title="Edit consensus value"
+                          >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}                  <div className="text-sm text-gray-600 mb-4">
                     {hasConsensus ? (
                       <span className="text-green-600 font-medium">✓ Team Consensus</span>
                     ) : (
@@ -2091,6 +2243,11 @@ export default function VotingSession({
                           : 'Mixed estimates - Discussion needed'
                         }
                       </span>
+                    )}
+                    {currentUser.role === 'Moderator' && !isEditingConsensus && (
+                      <div className="text-xs text-gray-500 mt-1">
+                        💡 Click the edit icon to override the consensus value
+                      </div>
                     )}
                   </div>
                   
