@@ -7,7 +7,7 @@ import Chat from './ChatPanel';
 import VideoConference from './VideoConference';
 import ErrorBoundary from './ErrorBoundary';
 import { calculateConsensus } from '../utils/planningPoker';
-import { submitEstimation, getEstimationsForItem, getUserVote, getSessionItems, getAllBacklogItems } from '../utils/planningSession';
+import { submitEstimation, getEstimationsForItem, getUserVote, getSessionItems, getAllBacklogItems, updateBacklogItem } from '../utils/planningSession';
 import { getUserDisplayName, getUserInitials, getUserInfoById } from '../utils/userUtils';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../supabaseClient';
@@ -1148,12 +1148,13 @@ export default function VotingSession({
         // Show confirmation to moderator
         setVoteNotification('Votes revealed to all participants!');
         setTimeout(() => setVoteNotification(null), 3000);
-        
-      } catch (error) {
+          } catch (error) {
         console.error('❌ Failed to broadcast reveal votes:', error);
+        const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+        const errorStack = error instanceof Error ? error.stack : undefined;
         console.error('❌ Error details:', {
-          message: error.message,
-          stack: error.stack,
+          message: errorMsg,
+          stack: errorStack,
           channelStatus: channel ? 'exists' : 'missing',
           subscriptionStatus: channelSubscribed
         });
@@ -1225,17 +1226,52 @@ export default function VotingSession({
     setIsEditingConsensus(false); // Exit edit mode if active
     setEditedConsensusValue(''); // Clear edit value
   };
-
   const handleAcceptEstimate = async () => {
     if (!currentItem) return;
     
     try {
-      // Update the backlog item with the final estimate
-      // const finalEstimate = consensus || Math.round(average);
-      // TODO: Update backlog item status and story points in database
+      // Get the final estimate value (moderator override takes precedence)
+      const finalEstimate = moderatorConsensus || consensus || (estimationType === 'fibonacci' ? average.toFixed(1) : 'M');
+      
+      console.log('📝 Accepting estimate for item:', {
+        itemId: currentItem.id,
+        finalEstimate,
+        estimationType,
+        moderatorConsensus,
+        calculatedConsensus: consensus,
+        average: average.toFixed(1)
+      });      // Update the backlog item with the final estimate
+      await updateBacklogItem(currentItem.id, {
+        story_points: String(finalEstimate),
+        estimation_type: estimationType,
+        status: 'Estimated' // Mark as estimated
+      });
+      
+      console.log('✅ Backlog item updated successfully');
+        // Update local session items to reflect the change
+      setSessionItems(prevItems => 
+        prevItems.map(item => 
+          item.id === currentItem.id 
+            ? { 
+                ...item, 
+                storyPoints: String(finalEstimate),
+                estimationType: estimationType,
+                status: 'Estimated' as const
+              }
+            : item
+        )
+      );
+      
+      // Show success notification
+      setVoteNotification(`✅ Estimate ${finalEstimate}${estimationType === 'fibonacci' ? ' SP' : ''} saved for "${currentItem.title}"`);
+      setTimeout(() => setVoteNotification(null), 4000);
+      
+      // Move to next item
       nextItem();
     } catch (error) {
       console.error('Error accepting estimate:', error);
+      setVoteNotification('Error saving estimate. Please try again.');
+      setTimeout(() => setVoteNotification(null), 3000);
     }
   };
 
@@ -1445,35 +1481,86 @@ export default function VotingSession({
       </div>
     );
   };
-
   // Navigation Component
   const NavigationControls = () => {
     if (currentUser.role !== 'Moderator') return null;
+
+    const estimatedCount = sessionItems.filter(item => item.status === 'Estimated').length;
 
     return (
       <div className="bg-white rounded-xl p-4 shadow-lg border border-gray-200 mb-6">
         <div className="flex items-center justify-between">
           <h3 className="font-semibold text-gray-900">Session Navigation</h3>
           <div className="text-sm text-gray-600">
-            Item {currentItemIndex + 1} of {pendingItems.length}
+            Item {currentItemIndex + 1} of {sessionItems.length} • {estimatedCount} Estimated
           </div>
         </div>
         
-        <div className="flex gap-3 mt-4">
+        {/* Item Progress Indicators */}
+        <div className="flex gap-2 mt-4 mb-4 overflow-x-auto">
+          {sessionItems.map((item, index) => (
+            <button
+              key={item.id}
+              onClick={() => {
+                if (index !== currentItemIndex) {
+                  setCurrentItemIndex(index);
+                  resetForNewItem();
+                  
+                  // Broadcast item change to all participants
+                  if (channel) {
+                    channel.send({
+                      type: 'broadcast',
+                      event: 'item-changed',
+                      payload: {
+                        newItemIndex: index,
+                        changedBy: user?.id,
+                        newItemTitle: item.title || 'Unknown Item'
+                      }
+                    });
+                  }
+                }
+              }}
+              className={`
+                relative min-w-[40px] h-10 rounded-lg border-2 transition-all duration-200 flex items-center justify-center                ${index === currentItemIndex
+                  ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium'
+                  : item.status === 'Estimated'
+                  ? 'border-green-300 bg-green-50 text-green-700 hover:border-green-400'
+                  : 'border-gray-300 bg-gray-50 text-gray-600 hover:border-gray-400 hover:bg-gray-100'
+                }
+              `}
+              title={`${item.title}${item.status === 'Estimated' ? ' - Estimated' : ' - Not estimated'}`}
+            >
+              <span className="text-sm font-medium">{index + 1}</span>
+              {item.status === 'Estimated' && (
+                <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full flex items-center justify-center">
+                  <CheckCircle className="w-2 h-2 text-white" />
+                </div>
+              )}
+              {index === currentItemIndex && (
+                <div className="absolute -top-1 -right-1 w-3 h-3 bg-blue-500 rounded-full"></div>
+              )}
+            </button>
+          ))}
+        </div>
+        
+        {/* Navigation Buttons */}
+        <div className="flex gap-3">
           <button
             onClick={previousItem}
             disabled={currentItemIndex === 0}
-            className="flex-1 bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex-1 bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
-            ← Previous Item
+            <ArrowLeft className="w-4 h-4" />
+            Previous Item
           </button>
           
           <button
             onClick={nextItem}
-            disabled={currentItemIndex >= pendingItems.length - 1}
-            className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={currentItemIndex >= sessionItems.length - 1}
+            className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
-            Next Item →
+            Next Item
+            <ArrowLeft className="w-4 h-4 rotate-180" />
           </button>
         </div>
       </div>
@@ -2001,20 +2088,108 @@ export default function VotingSession({
               <CheckCircle className="w-4 h-4" />
               {voteNotification}
             </div>
-          </div>
-        )}
-        
-        {/* Navigation Controls */}
-        <NavigationControls />        <div className="grid lg:grid-cols-2 gap-6">
+          </div>        )}          {/* Navigation Controls */}
+        {/* Commented out redundant Current Item section - story info is now in voting section
+        {currentItem && (
+          <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6 mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-gray-900">Current Item</h2>
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-gray-600">
+                  Item {currentItemIndex + 1} of {sessionItems.length}
+                </span>                {currentItem.status === 'Estimated' && (
+                  <div className="flex items-center gap-2 bg-green-100 text-green-800 px-3 py-1 rounded-lg">
+                    <CheckCircle className="w-4 h-4" />
+                    <span className="text-sm font-medium">Estimated</span>
+                    {currentItem.storyPoints && (
+                      <span className="text-sm">({currentItem.storyPoints}{currentItem.estimationType === 'fibonacci' ? ' SP' : ''})</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            <div className="space-y-3">
+              <div>
+                <h3 className="font-semibold text-gray-900 mb-1">{currentItem.title}</h3>
+                {currentItem.description && (
+                  <p className="text-gray-600 text-sm">{currentItem.description}</p>
+                )}
+              </div>
+                {currentItem.acceptanceCriteria && currentItem.acceptanceCriteria.length > 0 && (
+                <div>
+                  <h4 className="font-medium text-gray-800 mb-2 text-sm">Acceptance Criteria:</h4>
+                  <ul className="list-disc list-inside space-y-1">
+                    {currentItem.acceptanceCriteria.map((criteria: string, index: number) => (
+                      <li key={index} className="text-xs text-gray-600">{criteria}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              
+              <div className="flex items-center gap-4 text-sm">
+                <span className="bg-gray-100 text-gray-700 px-2 py-1 rounded">
+                  Priority: {currentItem.priority || 'Medium'}
+                </span>
+                <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                  Type: {estimationType === 'fibonacci' ? 'Story Points' : 'T-Shirt Sizes'}
+                </span>
+              </div>
+            </div>          </div>        {/* Navigation Controls */}
+        <NavigationControls />
+
+        <div className="grid lg:grid-cols-2 gap-6">
           {/* Voting Cards */}
           <div>
+            {/* Story Information */}
+            {currentItem && (
+              <div className="mb-6 bg-white rounded-xl p-4 shadow-lg border border-gray-200">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-semibold text-gray-900">{currentItem.title}</h3>
+                  {currentItem.status === 'Estimated' && (
+                    <div className="flex items-center gap-2 bg-green-100 text-green-800 px-3 py-1 rounded-lg">
+                      <CheckCircle className="w-4 h-4" />
+                      <span className="text-sm font-medium">Estimated</span>
+                      {currentItem.storyPoints && (
+                        <span className="text-sm">({currentItem.storyPoints}{currentItem.estimationType === 'fibonacci' ? ' SP' : ''})</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+                
+                {currentItem.description && (
+                  <p className="text-gray-600 text-sm mb-3">{currentItem.description}</p>
+                )}
+                
+                {currentItem.acceptanceCriteria && currentItem.acceptanceCriteria.length > 0 && (
+                  <div className="mb-3">
+                    <h4 className="font-medium text-gray-800 mb-2 text-sm">Acceptance Criteria:</h4>
+                    <ul className="list-disc list-inside space-y-1">
+                      {currentItem.acceptanceCriteria.map((criteria: string, index: number) => (
+                        <li key={index} className="text-xs text-gray-600">{criteria}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                
+                <div className="flex items-center gap-3 text-xs">
+                  <span className="bg-gray-100 text-gray-700 px-2 py-1 rounded">
+                    Priority: {currentItem.priority || 'Medium'}
+                  </span>
+                  <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                    Type: {estimationType === 'fibonacci' ? 'Story Points' : 'T-Shirt Sizes'}
+                  </span>
+                </div>
+              </div>
+            )}
+            
             <VotingCards
               onVote={handleVote}
               selectedVote={myVote}
               disabled={loading}
               estimationType={estimationType}
             />
-              {/* User's Vote Display */}
+            {/* User's Vote Display */}
             {myVote && (
               <div className="mt-4 bg-white rounded-xl p-4 shadow-lg border border-gray-200">
                 <div className="flex items-center justify-between">
@@ -2170,7 +2345,17 @@ export default function VotingSession({
                   ? 'bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200'
                   : 'bg-gradient-to-r from-purple-50 to-pink-50 border-purple-200'
               }`}>                <div className="text-center">
-                  <div className="text-sm text-gray-600 mb-2">Estimation Result</div>
+                  <div className="flex items-center justify-center gap-2 mb-2">
+                    <span className="text-sm text-gray-600">
+                      {currentItem?.status === 'Estimated' ? 'Final Estimate (Saved)' : 'Estimation Result'}
+                    </span>
+                    {currentItem?.status === 'Estimated' && (
+                      <div className="flex items-center gap-1 bg-green-100 text-green-800 px-2 py-1 rounded-full">
+                        <CheckCircle className="w-3 h-3" />
+                        <span className="text-xs font-medium">Saved</span>
+                      </div>
+                    )}
+                  </div>
                   
                   {/* Consensus Display/Edit */}
                   {isEditingConsensus && currentUser.role === 'Moderator' ? (
