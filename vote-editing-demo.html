@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vote Editing Functionality Demo</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f8fafc;
+        }
+        .demo-section {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            margin: 20px 0;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+        .vote-card {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 60px;
+            height: 80px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-weight: bold;
+            margin: 0 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: white;
+        }
+        .vote-card:hover {
+            border-color: #3b82f6;
+            transform: translateY(-2px);
+        }
+        .vote-card.selected {
+            border-color: #3b82f6;
+            background: #3b82f6;
+            color: white;
+        }
+        .user-vote {
+            background: #f1f5f9;
+            border-radius: 8px;
+            padding: 16px;
+            margin: 16px 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .vote-display {
+            background: #dbeafe;
+            color: #1e40af;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-weight: bold;
+        }
+        .edit-btn {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.2s;
+        }
+        .edit-btn:hover {
+            background: #2563eb;
+        }
+        .results-section {
+            background: linear-gradient(to right, #dbeafe, #e0e7ff);
+            border: 2px solid #3b82f6;
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+        }
+        .consensus-display {
+            font-size: 36px;
+            font-weight: bold;
+            color: #1e40af;
+            margin: 12px 0;
+        }
+        .status {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 500;
+            display: inline-block;
+        }
+        .status.consensus {
+            background: #dcfce7;
+            color: #166534;
+        }
+        .status.no-consensus {
+            background: #fed7aa;
+            color: #9a3412;
+        }
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #1f2937;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            opacity: 0;
+            transform: translateX(100%);
+            transition: all 0.3s;
+        }
+        .notification.show {
+            opacity: 1;
+            transform: translateX(0);
+        }
+        .step {
+            margin: 20px 0;
+            padding: 16px;
+            border-left: 4px solid #3b82f6;
+            background: #f8fafc;
+        }
+        .participants {
+            display: flex;
+            gap: 16px;
+            margin: 20px 0;
+        }
+        .participant {
+            flex: 1;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 16px;
+            text-align: center;
+        }
+        .participant.active {
+            border-color: #3b82f6;
+            background: #eff6ff;
+        }
+    </style>
+</head>
+<body>
+    <h1>🃏 Vote Editing Functionality Demo</h1>
+    <p>This demo shows how participants can edit their votes after reveal, with real-time updates for all users.</p>
+
+    <div class="demo-section">
+        <h2>Current Story: User Authentication Feature</h2>
+        <p><strong>Story Points:</strong> To be estimated</p>
+        <p><strong>Description:</strong> Implement user login and registration functionality</p>
+    </div>
+
+    <div class="demo-section">
+        <h3>Vote Selection</h3>
+        <div id="votingCards">
+            <div class="vote-card" data-value="1">1</div>
+            <div class="vote-card" data-value="2">2</div>
+            <div class="vote-card" data-value="3">3</div>
+            <div class="vote-card" data-value="5">5</div>
+            <div class="vote-card" data-value="8">8</div>
+            <div class="vote-card" data-value="13">13</div>
+        </div>
+
+        <div id="userVote" class="user-vote" style="display: none;">
+            <span>Your Vote:</span>
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <div class="vote-display" id="voteValue"></div>
+                <span id="voteStatus" style="color: #6b7280; font-size: 14px;"></span>
+                <button id="editBtn" class="edit-btn" style="display: none;">✏️ Edit Vote</button>
+            </div>
+        </div>
+        
+        <div id="voteInstructions" style="background: #dbeafe; border: 1px solid #93c5fd; padding: 12px; border-radius: 8px; margin-top: 16px;">
+            <span style="color: #1e40af;">💡 Select your estimate above to participate in voting</span>
+        </div>
+    </div>
+
+    <div class="demo-section">
+        <h3>Participants</h3>
+        <div class="participants">
+            <div class="participant active">
+                <div style="font-weight: bold;">You (Moderator)</div>
+                <div id="yourVoteDisplay" style="color: #6b7280;">Not voted</div>
+            </div>
+            <div class="participant">
+                <div style="font-weight: bold;">Alice (Developer)</div>
+                <div id="aliceVoteDisplay" style="color: #6b7280;">Not voted</div>
+            </div>
+            <div class="participant">
+                <div style="font-weight: bold;">Bob (Designer)</div>
+                <div id="bobVoteDisplay" style="color: #6b7280;">Not voted</div>
+            </div>
+        </div>
+
+        <button id="revealBtn" style="background: #059669; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; width: 100%; margin-top: 16px;" disabled>
+            👁️ Reveal Votes
+        </button>
+    </div>
+
+    <div id="resultsSection" class="demo-section results-section" style="display: none;">
+        <h3>Estimation Results</h3>
+        <div class="consensus-display" id="consensusValue">5.7 SP</div>
+        <div class="status no-consensus" id="consensusStatus">
+            Average: 5.7 - Discussion needed
+        </div>
+        
+        <div class="step">
+            <strong>💡 Try It:</strong> Click "Edit Vote" above to change your estimate and see how the results update in real-time!
+        </div>
+    </div>
+
+    <div class="demo-section">
+        <h3>Demo Steps</h3>
+        <div class="step">
+            <strong>Step 1:</strong> Select a vote (e.g., 5 points) ✅
+        </div>
+        <div class="step">
+            <strong>Step 2:</strong> Click "Reveal Votes" to simulate all participants voting ✅
+        </div>
+        <div class="step">
+            <strong>Step 3:</strong> After reveal, click "Edit Vote" to change your estimate ✅
+        </div>
+        <div class="step">
+            <strong>Step 4:</strong> Notice how the results update automatically and other participants are notified ✅
+        </div>
+    </div>
+
+    <div class="notification" id="notification"></div>
+
+    <script>
+        let currentVote = null;
+        let isRevealed = false;
+        let aliceVote = 8;
+        let bobVote = 3;
+
+        // Vote card selection
+        document.querySelectorAll('.vote-card').forEach(card => {
+            card.addEventListener('click', () => {
+                const value = card.dataset.value;
+                selectVote(value);
+            });
+        });        // Edit vote button
+        document.getElementById('editBtn').addEventListener('click', () => {
+            currentVote = null;
+            updateUI();
+            showNotification('You can now select a new vote from the cards above');
+        });
+
+        // Reveal votes button
+        document.getElementById('revealBtn').addEventListener('click', () => {
+            revealVotes();
+        });        function selectVote(value) {
+            currentVote = value;
+            updateUI();
+            
+            if (isRevealed) {
+                // Simulate broadcasting vote change
+                showNotification('Vote updated! Broadcasting change to all participants...');
+                setTimeout(() => simulateVoteChange(), 500);
+            } else {
+                showNotification('Vote selected! Click "Reveal Votes" when ready.');
+            }
+        }
+
+        function updateUI() {
+            // Update vote cards
+            document.querySelectorAll('.vote-card').forEach(card => {
+                card.classList.remove('selected');
+                if (card.dataset.value === currentVote) {
+                    card.classList.add('selected');
+                }
+            });
+
+            // Update user vote display
+            const userVoteDiv = document.getElementById('userVote');
+            const voteValueSpan = document.getElementById('voteValue');
+            const voteStatusSpan = document.getElementById('voteStatus');
+            const editBtn = document.getElementById('editBtn');
+            const instructions = document.getElementById('voteInstructions');
+
+            if (currentVote) {
+                userVoteDiv.style.display = 'flex';
+                voteValueSpan.textContent = currentVote;
+                
+                if (!isRevealed) {
+                    voteStatusSpan.textContent = '(You can change this)';
+                    editBtn.style.display = 'none';
+                    instructions.innerHTML = '<span style="color: #1e40af;">✅ Vote submitted! Wait for reveal or change your selection above</span>';
+                } else {
+                    voteStatusSpan.textContent = '';
+                    editBtn.style.display = 'inline-block';
+                    instructions.innerHTML = '<span style="color: #1e40af;">💡 You can edit your vote even after reveal - changes will be shown to all participants</span>';
+                }
+                
+                // Enable reveal button if we have a vote
+                document.getElementById('revealBtn').disabled = false;
+            } else {
+                if (isRevealed) {
+                    userVoteDiv.style.display = 'none';
+                    instructions.innerHTML = '<span style="color: #1e40af;">Select your new estimate above to update your vote</span>';
+                } else {
+                    userVoteDiv.style.display = 'none';
+                    instructions.innerHTML = '<span style="color: #1e40af;">💡 Select your estimate above to participate in voting</span>';
+                    document.getElementById('revealBtn').disabled = true;
+                }
+            }
+
+            // Update participant displays
+            document.getElementById('yourVoteDisplay').textContent = currentVote ? `${currentVote} SP` : 'Not voted';
+            
+            if (isRevealed) {
+                document.getElementById('aliceVoteDisplay').textContent = `${aliceVote} SP`;
+                document.getElementById('bobVoteDisplay').textContent = `${bobVote} SP`;
+                updateResults();
+            }
+        }
+
+        function revealVotes() {
+            isRevealed = true;
+            document.getElementById('revealBtn').textContent = '✅ Votes Revealed';
+            document.getElementById('revealBtn').disabled = true;
+            document.getElementById('resultsSection').style.display = 'block';
+            
+            updateUI();
+            showNotification('Votes revealed! You can now edit your vote.');
+        }
+
+        function updateResults() {
+            if (!currentVote) return;
+            
+            const votes = [parseInt(currentVote), aliceVote, bobVote];
+            const average = votes.reduce((sum, vote) => sum + vote, 0) / votes.length;
+            const hasConsensus = votes.every(vote => vote === votes[0]);
+            
+            document.getElementById('consensusValue').textContent = hasConsensus ? `${votes[0]} SP` : `${average.toFixed(1)} SP`;
+            
+            const statusElement = document.getElementById('consensusStatus');
+            if (hasConsensus) {
+                statusElement.textContent = '✓ Team Consensus';
+                statusElement.className = 'status consensus';
+            } else {
+                statusElement.textContent = `Average: ${average.toFixed(1)} - Discussion needed`;
+                statusElement.className = 'status no-consensus';
+            }
+        }
+
+        function simulateVoteChange() {
+            showNotification(`Your vote updated to ${currentVote} - All participants notified`);
+            
+            // Simulate other participants seeing the change
+            setTimeout(() => {
+                showNotification('Alice: "I see the results updated!"');
+            }, 2000);
+            
+            setTimeout(() => {
+                showNotification('Bob: "The average changed to reflect the new vote"');
+            }, 4000);
+        }
+
+        function showNotification(message) {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.classList.add('show');
+            
+            setTimeout(() => {
+                notification.classList.remove('show');
+            }, 3000);
+        }
+
+        // Initialize UI
+        updateUI();
+    </script>
+</body>
+</html>

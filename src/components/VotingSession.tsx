@@ -1,13 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { BacklogItem, User, Vote } from '../types';
-import { Eye, EyeOff, SkipForward, CheckCircle, ArrowLeft, Users, Clock, Settings, MessageCircle, FileText, Video } from 'lucide-react';
+import { Eye, EyeOff, SkipForward, CheckCircle, ArrowLeft, Users, Clock, Settings, MessageCircle, FileText, Video, RotateCcw } from 'lucide-react';
 import VotingCards from './VotingCards';
 import UserIcon from './UserIcon';
 import Chat from './ChatPanel';
 import VideoConference from './VideoConference';
 import ErrorBoundary from './ErrorBoundary';
 import { calculateConsensus } from '../utils/planningPoker';
-import { submitEstimation, getEstimationsForItem, getUserVote, getSessionItems, getAllBacklogItems } from '../utils/planningSession';
+import { submitEstimation, getEstimationsForItem, getUserVote, getSessionItems, getAllBacklogItems, updateBacklogItem, clearVotesForItem } from '../utils/planningSession';
 import { getUserDisplayName, getUserInitials, getUserInfoById } from '../utils/userUtils';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../supabaseClient';
@@ -50,8 +50,11 @@ export default function VotingSession({
     lastSeen: Date;
   }>>([]);
   const [isChatVisible, setIsChatVisible] = useState(false);
-  const [chatUnreadCount, setChatUnreadCount] = useState(0);
-  const [isVideoCallActive, setIsVideoCallActive] = useState(false);
+  const [chatUnreadCount, setChatUnreadCount] = useState(0);  const [isVideoCallActive, setIsVideoCallActive] = useState(false);
+  const [moderatorConsensus, setModeratorConsensus] = useState<string | null>(null);
+  const [isEditingConsensus, setIsEditingConsensus] = useState(false);
+  const [editedConsensusValue, setEditedConsensusValue] = useState<string>('');
+  const [consensusLoading, setConsensusLoading] = useState(false);
 
   // Refs to access current state in broadcast handlers
   const sessionItemsRef = useRef(sessionItems);
@@ -288,8 +291,7 @@ export default function VotingSession({
             
             // Show notification
             setVoteNotification(`${voterName} submitted a vote`);
-            setTimeout(() => setVoteNotification(null), 3000);
-          } else {
+            setTimeout(() => setVoteNotification(null), 3000);          } else {
             const reason = itemId !== currentActiveItem.id ? 'different item' : 'own vote';
             console.log(`🚫 Ignoring broadcast (${reason}):`, { 
               currentItemId: currentActiveItem.id,
@@ -298,6 +300,49 @@ export default function VotingSession({
               current_user_id: user?.id,
               broadcast_voter_id: voterId
             });
+          }
+        })
+        .on('broadcast', { event: 'vote-changed' }, (payload) => {
+          console.log('📥 Received vote-changed broadcast:', payload);
+          const { itemId, voterId, voterName, newValue } = payload.payload;
+          
+          // Get current item from refs to avoid stale closure
+          const currentSessionItems = sessionItemsRef.current;
+          const currentItemIndexValue = currentItemIndexRef.current;
+          const currentActiveItem = currentSessionItems[currentItemIndexValue];
+          
+          console.log('🔍 Processing vote-changed broadcast:', {
+            itemId_from_broadcast: itemId,
+            current_item_id: currentActiveItem?.id,
+            voter_id: voterId,
+            current_user_id: user?.id,
+            new_value: newValue
+          });
+          
+          if (!currentActiveItem) {
+            console.log('🚫 No current item set, cannot process vote change broadcast');
+            return;
+          }
+          
+          // Only update if the vote change wasn't made by this user and it's for the current item
+          if (itemId === currentActiveItem.id && voterId !== user?.id) {
+            console.log('🔄 Refreshing votes due to vote change from:', voterName);
+            
+            // Refresh the votes to show the updated vote
+            setTimeout(() => {
+              loadVotesForCurrentItem().then(() => {
+                console.log('✅ Vote refresh completed after vote change');
+              }).catch((error) => {
+                console.error('❌ Vote refresh failed after vote change:', error);
+              });
+            }, 150);
+            
+            // Show notification about the vote update
+            setVoteNotification(`${voterName} updated their vote to ${newValue}`);
+            setTimeout(() => setVoteNotification(null), 3000);
+          } else {
+            const reason = itemId !== currentActiveItem.id ? 'different item' : 'own vote change';
+            console.log(`🚫 Ignoring vote change broadcast (${reason})`);
           }
         })
         .on('broadcast', { event: 'vote-changed' }, (payload) => {
@@ -470,6 +515,141 @@ export default function VotingSession({
               setVoteNotification(`⚙️ ${changedByName} configured timer to ${timeDisplay}`);
               setTimeout(() => setVoteNotification(null), 4000);
             }
+          }        })        .on('broadcast', { event: 'consensus-changed' }, (payload) => {
+          console.log('📥 Received consensus-changed broadcast:', payload);
+          const { itemId, newConsensusValue, changedBy, changedByName, isEstimatedItem } = payload.payload;
+          
+          // Get current item from refs to avoid stale closure
+          const currentSessionItems = sessionItemsRef.current;
+          const currentItemIndexValue = currentItemIndexRef.current;
+          const currentActiveItem = currentSessionItems[currentItemIndexValue];
+          
+          if (!currentActiveItem) {
+            console.log('🚫 No current item set, cannot process consensus change broadcast');
+            return;
+          }
+          
+          // Only update if the change wasn't made by this user and it's for the current item
+          if (itemId === currentActiveItem.id && changedBy !== user?.id) {
+            console.log('🔄 Updating consensus due to moderator change');
+            
+            // For estimated items, update the session items array
+            if (isEstimatedItem) {
+              const updatedPoints = estimationType === 'fibonacci' 
+                ? parseFloat(newConsensusValue) 
+                : newConsensusValue;
+              
+              setSessionItems(prevItems => 
+                prevItems.map(item => 
+                  item.id === itemId 
+                    ? { ...item, storyPoints: updatedPoints }
+                    : item
+                )
+              );
+              
+              console.log('✅ Updated session items for estimated item:', {
+                itemId,
+                newStoryPoints: updatedPoints
+              });
+            } else {
+              // Update the moderator consensus for non-estimated items
+              setModeratorConsensus(newConsensusValue);
+            }
+              // Show notification about the consensus update
+            const message = isEstimatedItem 
+              ? `🎯 Moderator ${changedByName} updated final estimate to ${newConsensusValue}`
+              : `🎯 Moderator ${changedByName} set consensus to ${newConsensusValue}`;
+            setVoteNotification(message);
+            setTimeout(() => setVoteNotification(null), 4000);
+          }        })
+        .on('broadcast', { event: 'votes-reset' }, (payload) => {
+          console.log('📥 Received votes-reset broadcast:', payload);
+          const { itemId, resetBy, resetByName } = payload.payload;
+          
+          // Get current item from refs to avoid stale closure
+          const currentSessionItems = sessionItemsRef.current;
+          const currentItemIndexValue = currentItemIndexRef.current;
+          const currentActiveItem = currentSessionItems[currentItemIndexValue];
+          
+          if (!currentActiveItem) {
+            console.log('🚫 No current item set, cannot process votes reset broadcast');
+            return;
+          }
+          
+          // Only update if the reset wasn't triggered by this user and it's for the current item
+          if (itemId === currentActiveItem.id && resetBy !== user?.id) {
+            console.log('🔄 Applying votes reset due to moderator action');
+            
+            // Reset local voting state
+            setMyVote(null);
+            setVotes([]);
+            setIsRevealed(false);
+            setTimerActive(false);
+            setTimeRemaining(null);
+            setModeratorConsensus(null);
+            setIsEditingConsensus(false);
+            setEditedConsensusValue('');
+            
+            console.log('✅ Local state reset complete');
+            
+            // Show notification about the reset
+            const message = resetByName 
+              ? `🔄 ${resetByName} reset all votes - voting can begin again`
+              : '🔄 All votes have been reset - voting can begin again';
+            setVoteNotification(message);
+            setTimeout(() => setVoteNotification(null), 4000);
+          } else if (resetBy === user?.id) {
+            console.log('⏭️ Skipping votes reset broadcast (own action)');          } else {
+            console.log('⏭️ Skipping votes reset broadcast (different item)');
+          }
+        })
+        .on('broadcast', { event: 'estimation-reset' }, (payload) => {
+          console.log('📥 Received estimation-reset broadcast:', payload);
+          const { itemId, resetBy, resetByName } = payload.payload;
+          
+          // Get current item from refs to avoid stale closure
+          const currentSessionItems = sessionItemsRef.current;
+          const currentItemIndexValue = currentItemIndexRef.current;
+          const currentActiveItem = currentSessionItems[currentItemIndexValue];
+          
+          if (!currentActiveItem) {
+            console.log('🚫 No current item set, cannot process estimation reset broadcast');
+            return;
+          }
+          
+          // Only update if the reset wasn't triggered by this user and it's for the current item
+          if (itemId === currentActiveItem.id && resetBy !== user?.id) {
+            console.log('🔄 Applying estimation reset due to moderator action');
+            
+            // Reset local voting state
+            setMyVote(null);
+            setVotes([]);
+            setIsRevealed(false);
+            setTimerActive(false);
+            setTimeRemaining(null);
+            setModeratorConsensus(null);
+            setIsEditingConsensus(false);
+            setEditedConsensusValue('');
+            
+            // Update session items to reflect the status change
+            setSessionItems(prev => prev.map(item => 
+              item.id === itemId 
+                ? { ...item, status: 'Pending', storyPoints: undefined }
+                : item
+            ));
+            
+            console.log('✅ Local state reset complete - item returned to pending');
+            
+            // Show notification about the reset
+            const message = resetByName 
+              ? `🔄 ${resetByName} reset the estimation - item returned to pending status`
+              : '🔄 The estimation has been reset - item returned to pending status';
+            setVoteNotification(message);
+            setTimeout(() => setVoteNotification(null), 4000);
+          } else if (resetBy === user?.id) {
+            console.log('⏭️ Skipping estimation reset broadcast (own action)');
+          } else {
+            console.log('⏭️ Skipping estimation reset broadcast (different item)');
           }
         })
         .on('presence', { event: 'sync' }, () => {
@@ -572,28 +752,26 @@ export default function VotingSession({
             estimationType: item.backlog_items.estimation_type,
             acceptanceCriteria: item.backlog_items.acceptance_criteria || [],
             votingTimeLimit: item.backlog_items.voting_time_limit || 300
-          };
-        })
-        .filter((item: BacklogItem) => item.status === 'Pending');
+          };        })
+        // Remove filter to include both pending and estimated items
+        // .filter((item: BacklogItem) => item.status === 'Pending');
       
       setSessionItems(sessionBacklogItems);
     } catch (error) {
       console.error('Error loading session items:', error);
     } finally {
       setSessionItemsLoading(false);
-    }
-  };
-  const pendingItems = sessionItems;
-  const currentItem = pendingItems[currentItemIndex];
+    }  };
+  const allSessionItems = sessionItems; // Include both pending and estimated items
+  const currentItem = allSessionItems[currentItemIndex];
 
   // Debug current item state
   useEffect(() => {
     console.log('🔍 Current item state:', {
       sessionItems_length: sessionItems.length,
-      currentItemIndex,
-      currentItem_id: currentItem?.id,
+      currentItemIndex,      currentItem_id: currentItem?.id,
       currentItem_title: currentItem?.title,
-      pendingItems_length: pendingItems.length
+      allSessionItems_length: allSessionItems.length
     });
   }, [currentItem, currentItemIndex, sessionItems]);
   // Load votes and user's vote for current item
@@ -607,7 +785,27 @@ export default function VotingSession({
         handleEstimationTypeChange(currentItem.estimationType as 'fibonacci' | 'tshirt');
       }
     }
-  }, [currentItem, sessionId, user]);  // Helper function to detect vote changes
+  }, [currentItem, sessionId, user]);
+  // Auto-reveal votes for estimated items and initialize moderator consensus
+  useEffect(() => {
+    if (currentItem?.status === 'Estimated') {
+      console.log('🔍 Auto-revealing votes for estimated item:', currentItem.title);
+      setIsRevealed(true);
+      
+      // Initialize moderator consensus with the stored story points for estimated items
+      if (currentItem.storyPoints !== undefined && currentItem.storyPoints !== null) {
+        setModeratorConsensus(String(currentItem.storyPoints));
+        console.log('🔍 Initialized moderator consensus for estimated item:', currentItem.storyPoints);
+      }
+    } else {
+      // Reset reveal state for non-estimated items
+      setIsRevealed(false);
+      // Clear moderator consensus for non-estimated items
+      setModeratorConsensus(null);
+    }
+  }, [currentItem?.id, currentItem?.status, currentItem?.storyPoints]);
+
+  // Helper function to detect vote changes
   const hasVoteChanges = (newEstimations: any[], currentVotes: Vote[]) => {
     // Create a map of current votes by user_id
     const currentVoteMap = new Map();
@@ -1078,12 +1276,13 @@ export default function VotingSession({
         // Show confirmation to moderator
         setVoteNotification('Votes revealed to all participants!');
         setTimeout(() => setVoteNotification(null), 3000);
-        
-      } catch (error) {
+          } catch (error) {
         console.error('❌ Failed to broadcast reveal votes:', error);
+        const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+        const errorStack = error instanceof Error ? error.stack : undefined;
         console.error('❌ Error details:', {
-          message: error.message,
-          stack: error.stack,
+          message: errorMsg,
+          stack: errorStack,
           channelStatus: channel ? 'exists' : 'missing',
           subscriptionStatus: channelSubscribed
         });
@@ -1104,9 +1303,8 @@ export default function VotingSession({
       setTimeout(() => setVoteNotification(null), 3000);
     }
   };
-
   const nextItem = () => {
-    if (currentItemIndex < pendingItems.length - 1) {
+    if (currentItemIndex < allSessionItems.length - 1) {
       const newIndex = currentItemIndex + 1;
       setCurrentItemIndex(newIndex);
       resetForNewItem();
@@ -1119,13 +1317,12 @@ export default function VotingSession({
           payload: {
             newItemIndex: newIndex,
             changedBy: user?.id,
-            newItemTitle: pendingItems[newIndex]?.title || 'Unknown Item'
+            newItemTitle: allSessionItems[newIndex]?.title || 'Unknown Item'
           }
         });
       }
     }
   };
-
   const previousItem = () => {
     if (currentItemIndex > 0) {
       const newIndex = currentItemIndex - 1;
@@ -1140,36 +1337,195 @@ export default function VotingSession({
           payload: {
             newItemIndex: newIndex,
             changedBy: user?.id,
-            newItemTitle: pendingItems[newIndex]?.title || 'Unknown Item'
+            newItemTitle: allSessionItems[newIndex]?.title || 'Unknown Item'
           }
         });
       }
     }
-  };
-
-  const resetForNewItem = () => {
+  };const resetForNewItem = () => {
     setIsRevealed(false);
     setMyVote(null);
     setVotes([]);
     setTimerActive(false);
     setTimeRemaining(null);
+    setModeratorConsensus(null); // Clear moderator consensus for new item
+    setIsEditingConsensus(false); // Exit edit mode if active
+    setEditedConsensusValue(''); // Clear edit value
   };
-
   const handleAcceptEstimate = async () => {
     if (!currentItem) return;
     
     try {
-      // Update the backlog item with the final estimate
-      // const finalEstimate = consensus || Math.round(average);
-      // TODO: Update backlog item status and story points in database
+      // Get the final estimate value (moderator override takes precedence)
+      const finalEstimate = moderatorConsensus || consensus || (estimationType === 'fibonacci' ? average.toFixed(1) : 'M');
+      
+      console.log('📝 Accepting estimate for item:', {
+        itemId: currentItem.id,
+        finalEstimate,
+        estimationType,
+        moderatorConsensus,
+        calculatedConsensus: consensus,
+        average: average.toFixed(1)
+      });      // Update the backlog item with the final estimate
+      await updateBacklogItem(currentItem.id, {
+        story_points: String(finalEstimate),
+        estimation_type: estimationType,
+        status: 'Estimated' // Mark as estimated
+      });
+      
+      console.log('✅ Backlog item updated successfully');
+        // Update local session items to reflect the change
+      setSessionItems(prevItems => 
+        prevItems.map(item => 
+          item.id === currentItem.id 
+            ? { 
+                ...item, 
+                storyPoints: String(finalEstimate),
+                estimationType: estimationType,
+                status: 'Estimated' as const
+              }
+            : item
+        )
+      );
+      
+      // Show success notification
+      setVoteNotification(`✅ Estimate ${finalEstimate}${estimationType === 'fibonacci' ? ' SP' : ''} saved for "${currentItem.title}"`);
+      setTimeout(() => setVoteNotification(null), 4000);
+      
+      // Move to next item
       nextItem();
     } catch (error) {
       console.error('Error accepting estimate:', error);
+      setVoteNotification('Error saving estimate. Please try again.');
+      setTimeout(() => setVoteNotification(null), 3000);
     }
   };
-
   const handleSkip = () => {
     nextItem();
+  };
+
+  // Handle reset votes for the current item (moderator only)
+  const handleResetVotes = async () => {
+    if (!currentItem || !user || currentUser.role !== 'Moderator') return;
+    
+    try {
+      console.log('🔄 Resetting votes for item:', currentItem.id);
+      
+      // Clear all votes from the database
+      await clearVotesForItem(sessionId, currentItem.id);
+      
+      // Reset local state
+      setMyVote(null);
+      setVotes([]);
+      setIsRevealed(false);
+      setTimerActive(false);
+      setTimeRemaining(null);
+      setModeratorConsensus(null);
+      setIsEditingConsensus(false);
+      setEditedConsensusValue('');
+      
+      console.log('✅ Votes reset successfully for item:', currentItem.title);
+      
+      // Broadcast reset to all participants
+      if (channel && channelSubscribed) {
+        const resetPayload = {
+          type: 'broadcast',
+          event: 'votes-reset',
+          payload: {
+            itemId: currentItem.id,
+            resetBy: user.id,
+            resetByName: getUserDisplayName(user),
+            timestamp: new Date().toISOString()
+          }
+        };
+        
+        console.log('📡 Broadcasting votes reset to all participants:', resetPayload);
+        
+        channel.send(resetPayload).then((result: any) => {
+          console.log('✅ Reset broadcast sent successfully:', result);
+        }).catch((error: any) => {
+          console.error('❌ Reset broadcast failed:', error);
+        });
+      }
+      
+      // Show success notification
+      setVoteNotification(`🔄 All votes reset for "${currentItem.title}" - voting can begin again`);
+      setTimeout(() => setVoteNotification(null), 4000);
+      
+    } catch (error) {
+      console.error('Error resetting votes:', error);
+      setVoteNotification('Error resetting votes. Please try again.');
+      setTimeout(() => setVoteNotification(null), 3000);    }
+  };
+
+  // Handle reset estimated ticket - removes final estimate and all votes (moderator only)
+  const handleResetEstimatedTicket = async () => {
+    if (!currentItem || !user || currentUser.role !== 'Moderator' || currentItem.status !== 'Estimated') return;
+    
+    try {
+      console.log('🔄 Resetting estimated ticket:', currentItem.id);
+      
+      // Clear all votes from the database
+      await clearVotesForItem(sessionId, currentItem.id);
+      
+      // Reset the backlog item status to 'Pending' and clear story points
+      const updatedItem = await updateBacklogItem(currentItem.id, {
+        status: 'Pending',
+        story_points: undefined
+      });
+      
+      console.log('✅ Backlog item reset to pending:', updatedItem);
+      
+      // Reset local state
+      setMyVote(null);
+      setVotes([]);
+      setIsRevealed(false);
+      setTimerActive(false);
+      setTimeRemaining(null);
+      setModeratorConsensus(null);
+      setIsEditingConsensus(false);
+      setEditedConsensusValue('');
+      
+      // Update session items to reflect the status change
+      setSessionItems(prev => prev.map(item => 
+        item.id === currentItem.id 
+          ? { ...item, status: 'Pending', storyPoints: undefined }
+          : item
+      ));
+      
+      console.log('✅ Estimated ticket reset successfully for item:', currentItem.title);
+      
+      // Broadcast reset to all participants
+      if (channel && channelSubscribed) {
+        const resetPayload = {
+          type: 'broadcast',
+          event: 'estimation-reset',
+          payload: {
+            itemId: currentItem.id,
+            resetBy: user.id,
+            resetByName: getUserDisplayName(user),
+            timestamp: new Date().toISOString()
+          }
+        };
+        
+        console.log('📡 Broadcasting estimation reset to all participants:', resetPayload);
+        
+        channel.send(resetPayload).then((result: any) => {
+          console.log('✅ Estimation reset broadcast sent successfully:', result);
+        }).catch((error: any) => {
+          console.error('❌ Estimation reset broadcast failed:', error);
+        });
+      }
+      
+      // Show success notification
+      setVoteNotification(`🔄 Estimation reset for "${currentItem.title}" - item returned to pending status`);
+      setTimeout(() => setVoteNotification(null), 4000);
+      
+    } catch (error) {
+      console.error('Error resetting estimated ticket:', error);
+      setVoteNotification('Error resetting estimated ticket. Please try again.');
+      setTimeout(() => setVoteNotification(null), 3000);
+    }
   };
 
   // Handle estimation type change with real-time sync
@@ -1374,35 +1730,86 @@ export default function VotingSession({
       </div>
     );
   };
-
   // Navigation Component
   const NavigationControls = () => {
     if (currentUser.role !== 'Moderator') return null;
+
+    const estimatedCount = sessionItems.filter(item => item.status === 'Estimated').length;
 
     return (
       <div className="bg-white rounded-xl p-4 shadow-lg border border-gray-200 mb-6">
         <div className="flex items-center justify-between">
           <h3 className="font-semibold text-gray-900">Session Navigation</h3>
           <div className="text-sm text-gray-600">
-            Item {currentItemIndex + 1} of {pendingItems.length}
+            Item {currentItemIndex + 1} of {sessionItems.length} • {estimatedCount} Estimated
           </div>
         </div>
         
-        <div className="flex gap-3 mt-4">
+        {/* Item Progress Indicators */}
+        <div className="flex gap-2 mt-4 mb-4 overflow-x-auto">
+          {sessionItems.map((item, index) => (
+            <button
+              key={item.id}
+              onClick={() => {
+                if (index !== currentItemIndex) {
+                  setCurrentItemIndex(index);
+                  resetForNewItem();
+                  
+                  // Broadcast item change to all participants
+                  if (channel) {
+                    channel.send({
+                      type: 'broadcast',
+                      event: 'item-changed',
+                      payload: {
+                        newItemIndex: index,
+                        changedBy: user?.id,
+                        newItemTitle: item.title || 'Unknown Item'
+                      }
+                    });
+                  }
+                }
+              }}
+              className={`
+                relative min-w-[40px] h-10 rounded-lg border-2 transition-all duration-200 flex items-center justify-center                ${index === currentItemIndex
+                  ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium'
+                  : item.status === 'Estimated'
+                  ? 'border-green-300 bg-green-50 text-green-700 hover:border-green-400'
+                  : 'border-gray-300 bg-gray-50 text-gray-600 hover:border-gray-400 hover:bg-gray-100'
+                }
+              `}
+              title={`${item.title}${item.status === 'Estimated' ? ' - Estimated' : ' - Not estimated'}`}
+            >
+              <span className="text-sm font-medium">{index + 1}</span>
+              {item.status === 'Estimated' && (
+                <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full flex items-center justify-center">
+                  <CheckCircle className="w-2 h-2 text-white" />
+                </div>
+              )}
+              {index === currentItemIndex && (
+                <div className="absolute -top-1 -right-1 w-3 h-3 bg-blue-500 rounded-full"></div>
+              )}
+            </button>
+          ))}
+        </div>
+        
+        {/* Navigation Buttons */}
+        <div className="flex gap-3">
           <button
             onClick={previousItem}
             disabled={currentItemIndex === 0}
-            className="flex-1 bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex-1 bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
-            ← Previous Item
+            <ArrowLeft className="w-4 h-4" />
+            Previous Item
           </button>
           
           <button
             onClick={nextItem}
-            disabled={currentItemIndex >= pendingItems.length - 1}
-            className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={currentItemIndex >= sessionItems.length - 1}
+            className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
-            Next Item →
+            Next Item
+            <ArrowLeft className="w-4 h-4 rotate-180" />
           </button>
         </div>
       </div>
@@ -1495,7 +1902,102 @@ export default function VotingSession({
 
   const handleTimerConfigCancel = () => {
     setTempTimeLimit(votingTimeLimit);
-    setShowTimerConfig(false);
+    setShowTimerConfig(false);  };
+
+  // Consensus editing functions
+  const handleStartConsensusEdit = () => {
+    if (currentUser.role !== 'Moderator') return;
+    
+    const currentValue = moderatorConsensus || consensus || (estimationType === 'fibonacci' ? average.toFixed(1) : 'M');
+    setEditedConsensusValue(String(currentValue));
+    setIsEditingConsensus(true);
+  };
+
+  const handleCancelConsensusEdit = () => {
+    setIsEditingConsensus(false);
+    setEditedConsensusValue('');
+  };
+  const handleSaveConsensus = async () => {
+    if (!currentItem || !user || !editedConsensusValue.trim() || consensusLoading) return;
+    
+    setConsensusLoading(true);
+    
+    try {
+      // Update local moderator consensus
+      setModeratorConsensus(editedConsensusValue.trim());
+      
+      // For estimated items, update the database and session items
+      if (currentItem.status === 'Estimated') {
+        const updatedPoints = estimationType === 'fibonacci' 
+          ? parseFloat(editedConsensusValue.trim()) 
+          : editedConsensusValue.trim();
+        
+        // Update the database
+        await updateBacklogItem(currentItem.id, {
+          story_points: String(updatedPoints),
+          status: 'Estimated'
+        });
+        
+        // Update the session items array
+        setSessionItems(prevItems => 
+          prevItems.map(item => 
+            item.id === currentItem.id 
+              ? { ...item, storyPoints: updatedPoints }
+              : item
+          )
+        );
+        
+        console.log('✅ Updated estimated item in database:', {
+          itemId: currentItem.id,
+          newStoryPoints: updatedPoints
+        });
+      }
+      
+      // Broadcast consensus change to all participants
+      if (channel && channelSubscribed) {
+        const moderatorDisplayName = getUserDisplayName(user);
+        
+        const broadcastPayload = {
+          type: 'broadcast',
+          event: 'consensus-changed',
+          payload: {
+            itemId: currentItem.id,
+            newConsensusValue: editedConsensusValue.trim(),
+            changedBy: user.id,
+            changedByName: moderatorDisplayName,
+            timestamp: new Date().toISOString(),
+            isEstimatedItem: currentItem.status === 'Estimated'
+          }
+        };
+        
+        console.log('📡 Broadcasting consensus change:', broadcastPayload);
+        await channel.send(broadcastPayload);
+        console.log('✅ Consensus change broadcast sent successfully');
+        
+        // Show local notification
+        const message = currentItem.status === 'Estimated' 
+          ? `Final estimate updated to ${editedConsensusValue.trim()}`
+          : `Consensus updated to ${editedConsensusValue.trim()}`;
+        setVoteNotification(message);
+        setTimeout(() => setVoteNotification(null), 3000);
+        
+      } else {
+        console.error('❌ Cannot broadcast consensus change - channel not ready');
+        setVoteNotification('Error: Unable to broadcast consensus change');
+        setTimeout(() => setVoteNotification(null), 3000);
+      }
+      
+      // Exit edit mode
+      setIsEditingConsensus(false);
+      setEditedConsensusValue('');
+      
+    } catch (error: any) {
+      console.error('Error saving consensus:', error);
+      setVoteNotification('Error saving consensus. Please try again.');
+      setTimeout(() => setVoteNotification(null), 3000);
+    } finally {
+      setConsensusLoading(false);
+    }
   };
 
   // Predefined timer options
@@ -1689,7 +2191,7 @@ export default function VotingSession({
                 </div>
                 <div className="flex items-center gap-2">
                   <Clock className="w-4 h-4" />
-                  Item {currentItemIndex + 1} of {pendingItems.length}
+                  Item {currentItemIndex + 1} of {allSessionItems.length}
                 </div>
               </div>
             </div>
@@ -1747,7 +2249,7 @@ export default function VotingSession({
                 <div className="flex items-center gap-3">
                   <div className="flex items-center gap-2 text-blue-800">
                     <Clock className="w-5 h-5" />
-                    <span className="font-medium">Current Item: {currentItemIndex + 1} of {pendingItems.length}</span>
+                    <span className="font-medium">Current Item: {currentItemIndex + 1} of {allSessionItems.length}</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-4">
@@ -1768,18 +2270,28 @@ export default function VotingSession({
               </div>
             </div>
           )}
-          
-          <div className="bg-gray-50 rounded-xl p-6">
+            <div className="bg-gray-50 rounded-xl p-6">
             <div className="flex items-start justify-between mb-3">
               <h1 className="text-2xl font-bold text-gray-900">{currentItem.title}</h1>
-              <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                currentItem.priority === 'Critical' ? 'bg-red-100 text-red-800' :
-                currentItem.priority === 'High' ? 'bg-orange-100 text-orange-800' :
-                currentItem.priority === 'Medium' ? 'bg-yellow-100 text-yellow-800' :
-                'bg-green-100 text-green-800'
-              }`}>
-                {currentItem.priority} Priority
-              </span>
+              <div className="flex items-center gap-3">
+                {currentItem.status === 'Estimated' && (
+                  <div className="flex items-center gap-2 bg-green-100 text-green-800 px-3 py-1 rounded-lg">
+                    <CheckCircle className="w-5 h-5" />
+                    <span className="font-medium">Estimated</span>
+                    {currentItem.storyPoints && (
+                      <span>({currentItem.storyPoints}{currentItem.estimationType === 'fibonacci' ? ' SP' : ''})</span>
+                    )}
+                  </div>
+                )}
+                <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                  currentItem.priority === 'Critical' ? 'bg-red-100 text-red-800' :
+                  currentItem.priority === 'High' ? 'bg-orange-100 text-orange-800' :
+                  currentItem.priority === 'Medium' ? 'bg-yellow-100 text-yellow-800' :
+                  'bg-green-100 text-green-800'
+                }`}>
+                  {currentItem.priority} Priority
+                </span>
+              </div>
             </div>
             <p className="text-gray-700 mb-4">{currentItem.description}</p>
             
@@ -1865,22 +2377,64 @@ export default function VotingSession({
               <CheckCircle className="w-4 h-4" />
               {voteNotification}
             </div>
-          </div>
-        )}
-        
-        {/* Navigation Controls */}
+          </div>        )}          {/* Navigation Controls */}
+        {/* Commented out redundant Current Item section - story info is now in voting section
+        {currentItem && (
+          <div className="bg-white rounded-xl shadow-lg border border-gray-200 p-6 mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-gray-900">Current Item</h2>
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-gray-600">
+                  Item {currentItemIndex + 1} of {sessionItems.length}
+                </span>                {currentItem.status === 'Estimated' && (
+                  <div className="flex items-center gap-2 bg-green-100 text-green-800 px-3 py-1 rounded-lg">
+                    <CheckCircle className="w-4 h-4" />
+                    <span className="text-sm font-medium">Estimated</span>
+                    {currentItem.storyPoints && (
+                      <span className="text-sm">({currentItem.storyPoints}{currentItem.estimationType === 'fibonacci' ? ' SP' : ''})</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            <div className="space-y-3">
+              <div>
+                <h3 className="font-semibold text-gray-900 mb-1">{currentItem.title}</h3>
+                {currentItem.description && (
+                  <p className="text-gray-600 text-sm">{currentItem.description}</p>
+                )}
+              </div>
+                {currentItem.acceptanceCriteria && currentItem.acceptanceCriteria.length > 0 && (
+                <div>
+                  <h4 className="font-medium text-gray-800 mb-2 text-sm">Acceptance Criteria:</h4>
+                  <ul className="list-disc list-inside space-y-1">
+                    {currentItem.acceptanceCriteria.map((criteria: string, index: number) => (
+                      <li key={index} className="text-xs text-gray-600">{criteria}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              
+              <div className="flex items-center gap-4 text-sm">
+                <span className="bg-gray-100 text-gray-700 px-2 py-1 rounded">
+                  Priority: {currentItem.priority || 'Medium'}
+                </span>
+                <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                  Type: {estimationType === 'fibonacci' ? 'Story Points' : 'T-Shirt Sizes'}
+                </span>
+              </div>
+            </div>          </div>        {/* Navigation Controls */}
         <NavigationControls />
 
         <div className="grid lg:grid-cols-2 gap-6">
           {/* Voting Cards */}
-          <div>
-            <VotingCards
+          <div>            <VotingCards
               onVote={handleVote}
               selectedVote={myVote}
-              disabled={isRevealed || loading}
+              disabled={loading || currentItem?.status === 'Estimated'}
               estimationType={estimationType}
             />
-            
             {/* User's Vote Display */}
             {myVote && (
               <div className="mt-4 bg-white rounded-xl p-4 shadow-lg border border-gray-200">
@@ -1891,9 +2445,26 @@ export default function VotingSession({
                       estimationType === 'fibonacci' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'
                     }`}>
                       {myVote}
-                    </span>
-                    {!isRevealed && !loading && (
+                    </span>                    {!isRevealed && !loading && currentItem?.status !== 'Estimated' && (
                       <span className="text-sm text-gray-500">(You can change this)</span>
+                    )}
+                    {!isRevealed && !loading && currentItem?.status === 'Estimated' && (
+                      <span className="text-sm text-green-600">(Item already estimated)</span>
+                    )}                    {isRevealed && !loading && currentItem?.status !== 'Estimated' && (
+                      <button
+                        onClick={() => {
+                          setMyVote(null);
+                          setVoteNotification('You can now select a new vote from the cards above');
+                          setTimeout(() => setVoteNotification(null), 3000);
+                        }}
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded-lg text-sm font-medium transition-colors flex items-center gap-1"
+                        title="Edit your vote"
+                      >
+                        ✏️ Edit Vote
+                      </button>
+                    )}
+                    {isRevealed && !loading && currentItem?.status === 'Estimated' && (
+                      <span className="text-sm text-green-600 font-medium">✓ Estimate Finalized</span>
                     )}
                     {loading && (
                       <div className="flex items-center gap-2 text-sm text-blue-600">
@@ -1902,35 +2473,80 @@ export default function VotingSession({
                       </div>
                     )}
                   </div>
+                </div>                {isRevealed && currentItem?.status !== 'Estimated' && (
+                  <div className="mt-2 text-xs text-gray-500">
+                    💡 You can edit your vote even after reveal - changes will be shown to all participants
+                  </div>
+                )}
+                {isRevealed && currentItem?.status === 'Estimated' && (
+                  <div className="mt-2 text-xs text-green-600">
+                    ✓ This item has been finalized with an accepted estimate
+                  </div>
+                )}
+              </div>
+            )}            {/* Vote submission instructions */}
+            {!myVote && currentItem?.status !== 'Estimated' && (
+              <div className={`mt-4 rounded-xl p-4 ${
+                isRevealed 
+                  ? 'bg-green-50 border border-green-200' 
+                  : 'bg-blue-50 border border-blue-200'
+              }`}>
+                <div className={`flex items-center gap-2 ${
+                  isRevealed ? 'text-green-800' : 'text-blue-800'
+                }`}>
+                  <div className={`w-2 h-2 rounded-full animate-pulse ${
+                    isRevealed ? 'bg-green-600' : 'bg-blue-600'
+                  }`}></div>
+                  <span className="font-medium text-sm">
+                    {isRevealed 
+                      ? "✏️ Select your new estimate above to update your vote" 
+                      : "Select your estimate above to participate in voting"
+                    }
+                  </span>
                 </div>
+                {isRevealed && (
+                  <div className="mt-2 text-xs text-green-700">
+                    🎯 Your new vote will be saved and all participants will see the updated results
+                  </div>
+                )}
               </div>
             )}
-
-            {/* Vote submission instructions */}
-            {!myVote && !isRevealed && (
-              <div className="mt-4 bg-blue-50 border border-blue-200 rounded-xl p-4">
-                <div className="flex items-center gap-2 text-blue-800">
-                  <div className="w-2 h-2 bg-blue-600 rounded-full animate-pulse"></div>
-                  <span className="font-medium text-sm">Select your estimate above to participate in voting</span>
+            {!myVote && currentItem?.status === 'Estimated' && (
+              <div className="mt-4 rounded-xl p-4 bg-gray-50 border border-gray-200">
+                <div className="flex items-center gap-2 text-gray-600">
+                  <CheckCircle className="w-4 h-4 text-green-600" />
+                  <span className="font-medium text-sm">
+                    This item has been finalized with an accepted estimate
+                  </span>
+                </div>
+                <div className="mt-2 text-xs text-gray-500">
+                  Voting is no longer available for estimated items
                 </div>
               </div>
             )}
           </div>
 
           {/* Votes Display */}
-          <div className="bg-white rounded-xl p-6 shadow-lg border border-gray-200">
-            <div className="flex items-center justify-between mb-4">
+          <div className="bg-white rounded-xl p-6 shadow-lg border border-gray-200">            <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-gray-900">Team Votes</h3>
-              {currentUser.role === 'Moderator' && votes.length > 0 && !isRevealed && (
-                <button
-                  onClick={revealVotes}
-                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors duration-200 flex items-center gap-2"
-                >
-                  <Eye className="w-4 h-4" />
-                  Reveal Votes
-                </button>
-              )}
-            </div>            <div className="space-y-3">
+              <div className="flex items-center gap-3">
+                {currentItem?.status === 'Estimated' && isRevealed && (
+                  <span className="text-sm text-green-600 font-medium flex items-center gap-1">
+                    <CheckCircle className="w-4 h-4" />
+                    Auto-revealed (Item Estimated)
+                  </span>
+                )}
+                {currentUser.role === 'Moderator' && votes.length > 0 && !isRevealed && (
+                  <button
+                    onClick={revealVotes}
+                    className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors duration-200 flex items-center gap-2"
+                  >
+                    <Eye className="w-4 h-4" />
+                    Reveal Votes
+                  </button>
+                )}
+              </div>
+            </div><div className="space-y-3">
               {(() => {
                 console.log('🔍 VOTE RENDERING DEBUG:', {
                   votesLoading,
@@ -2004,12 +2620,80 @@ export default function VotingSession({
                   ? 'bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200'
                   : 'bg-gradient-to-r from-purple-50 to-pink-50 border-purple-200'
               }`}>                <div className="text-center">
-                  <div className="text-sm text-gray-600 mb-2">Estimation Result</div>
-                  <div className="text-3xl font-bold text-gray-900 mb-2">
-                    {consensus || (estimationType === 'fibonacci' ? average.toFixed(1) : 'M')}
-                    {estimationType === 'fibonacci' ? ' SP' : ''}
+                  <div className="flex items-center justify-center gap-2 mb-2">
+                    <span className="text-sm text-gray-600">
+                      {currentItem?.status === 'Estimated' ? 'Final Estimate (Saved)' : 'Estimation Result'}
+                    </span>
+                    {currentItem?.status === 'Estimated' && (
+                      <div className="flex items-center gap-1 bg-green-100 text-green-800 px-2 py-1 rounded-full">
+                        <CheckCircle className="w-3 h-3" />
+                        <span className="text-xs font-medium">Saved</span>
+                      </div>
+                    )}
                   </div>
-                  <div className="text-sm text-gray-600 mb-4">
+                  
+                  {/* Consensus Display/Edit */}
+                  {isEditingConsensus && currentUser.role === 'Moderator' ? (
+                    <div className="mb-4">
+                      <input
+                        type="text"
+                        value={editedConsensusValue}
+                        onChange={(e) => setEditedConsensusValue(e.target.value)}
+                        className="text-3xl font-bold text-gray-900 text-center bg-white border-2 border-blue-500 rounded-lg px-4 py-2 w-32 mx-auto block"
+                        placeholder="8"
+                        autoFocus
+                        disabled={consensusLoading}
+                      />
+                      <div className="text-sm text-gray-600 mt-2">
+                        {estimationType === 'fibonacci' ? 'Enter story points' : 'Enter T-shirt size'}
+                      </div>
+                      <div className="flex gap-2 justify-center mt-3">
+                        <button
+                          onClick={handleSaveConsensus}
+                          disabled={consensusLoading || !editedConsensusValue.trim()}
+                          className="bg-green-600 text-white px-3 py-1 rounded-lg hover:bg-green-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                        >
+                          {consensusLoading ? (
+                            <>
+                              <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
+                              Saving...
+                            </>
+                          ) : (
+                            <>
+                              ✓ Save
+                            </>
+                          )}
+                        </button>
+                        <button
+                          onClick={handleCancelConsensusEdit}
+                          disabled={consensusLoading}
+                          className="bg-gray-500 text-white px-3 py-1 rounded-lg hover:bg-gray-600 transition-colors text-sm font-medium disabled:opacity-50"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mb-2">
+                      <div className="text-3xl font-bold text-gray-900 mb-2 flex items-center justify-center gap-2">
+                        <span>
+                          {moderatorConsensus || consensus || (estimationType === 'fibonacci' ? average.toFixed(1) : 'M')}
+                          {estimationType === 'fibonacci' ? ' SP' : ''}
+                        </span>
+                        {currentUser.role === 'Moderator' && (
+                          <button
+                            onClick={handleStartConsensusEdit}
+                            className="ml-2 text-blue-600 hover:text-blue-700 transition-colors"
+                            title="Edit consensus value"
+                          >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}                  <div className="text-sm text-gray-600 mb-4">
                     {hasConsensus ? (
                       <span className="text-green-600 font-medium">✓ Team Consensus</span>
                     ) : (
@@ -2020,9 +2704,12 @@ export default function VotingSession({
                         }
                       </span>
                     )}
-                  </div>
-                  
-                  {currentUser.role === 'Moderator' && (
+                    {currentUser.role === 'Moderator' && !isEditingConsensus && (
+                      <div className="text-xs text-gray-500 mt-1">
+                        💡 Click the edit icon to override the consensus value
+                      </div>
+                    )}
+                  </div>                    {currentUser.role === 'Moderator' && currentItem?.status !== 'Estimated' && (
                     <div className="flex gap-3 justify-center">
                       <button
                         onClick={handleAcceptEstimate}
@@ -2037,6 +2724,27 @@ export default function VotingSession({
                       >
                         <SkipForward className="w-4 h-4" />
                         Skip for Now
+                      </button>
+                      <button
+                        onClick={handleResetVotes}
+                        className="bg-orange-600 text-white px-4 py-2 rounded-lg hover:bg-orange-700 transition-colors duration-200 flex items-center gap-2"
+                        title="Reset all votes for this item - clears votes and allows voting to restart"
+                      >
+                        <RotateCcw className="w-4 h-4" />
+                        Reset Votes                      </button>
+                    </div>
+                  )}
+                  
+                  {/* Moderator actions for estimated items */}
+                  {currentUser.role === 'Moderator' && currentItem?.status === 'Estimated' && (
+                    <div className="flex gap-3 justify-center">
+                      <button
+                        onClick={handleResetEstimatedTicket}
+                        className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors duration-200 flex items-center gap-2"
+                        title="Reset this estimated ticket - removes final estimate and all votes, returns item to pending status"
+                      >
+                        <RotateCcw className="w-4 h-4" />
+                        Reset Estimated Ticket
                       </button>
                     </div>
                   )}

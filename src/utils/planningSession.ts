@@ -550,3 +550,22 @@ export async function getChatStatistics(sessionId: string) {
     return { totalMessages: 0, uniqueParticipants: 0, messagesByUser: {} };
   }
 }
+
+// Clear all votes for a specific backlog item in a session (moderator only)
+export async function clearVotesForItem(session_id: string, backlog_item_id: string) {
+  console.log('🗑️ Clearing all votes for item:', { session_id, backlog_item_id });
+  
+  const { data, error } = await supabase
+    .from('estimations')
+    .delete()
+    .eq('session_id', session_id)
+    .eq('backlog_item_id', backlog_item_id);
+    
+  if (error) {
+    console.error('❌ Error clearing votes:', error);
+    throw error;
+  }
+  
+  console.log('✅ All votes cleared for item:', data);
+  return data;
+}
