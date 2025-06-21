@@ -288,8 +288,7 @@ export default function VotingSession({
             
             // Show notification
             setVoteNotification(`${voterName} submitted a vote`);
-            setTimeout(() => setVoteNotification(null), 3000);
-          } else {
+            setTimeout(() => setVoteNotification(null), 3000);          } else {
             const reason = itemId !== currentActiveItem.id ? 'different item' : 'own vote';
             console.log(`🚫 Ignoring broadcast (${reason}):`, { 
               currentItemId: currentActiveItem.id,
@@ -298,6 +297,49 @@ export default function VotingSession({
               current_user_id: user?.id,
               broadcast_voter_id: voterId
             });
+          }
+        })
+        .on('broadcast', { event: 'vote-changed' }, (payload) => {
+          console.log('📥 Received vote-changed broadcast:', payload);
+          const { itemId, voterId, voterName, newValue } = payload.payload;
+          
+          // Get current item from refs to avoid stale closure
+          const currentSessionItems = sessionItemsRef.current;
+          const currentItemIndexValue = currentItemIndexRef.current;
+          const currentActiveItem = currentSessionItems[currentItemIndexValue];
+          
+          console.log('🔍 Processing vote-changed broadcast:', {
+            itemId_from_broadcast: itemId,
+            current_item_id: currentActiveItem?.id,
+            voter_id: voterId,
+            current_user_id: user?.id,
+            new_value: newValue
+          });
+          
+          if (!currentActiveItem) {
+            console.log('🚫 No current item set, cannot process vote change broadcast');
+            return;
+          }
+          
+          // Only update if the vote change wasn't made by this user and it's for the current item
+          if (itemId === currentActiveItem.id && voterId !== user?.id) {
+            console.log('🔄 Refreshing votes due to vote change from:', voterName);
+            
+            // Refresh the votes to show the updated vote
+            setTimeout(() => {
+              loadVotesForCurrentItem().then(() => {
+                console.log('✅ Vote refresh completed after vote change');
+              }).catch((error) => {
+                console.error('❌ Vote refresh failed after vote change:', error);
+              });
+            }, 150);
+            
+            // Show notification about the vote update
+            setVoteNotification(`${voterName} updated their vote to ${newValue}`);
+            setTimeout(() => setVoteNotification(null), 3000);
+          } else {
+            const reason = itemId !== currentActiveItem.id ? 'different item' : 'own vote change';
+            console.log(`🚫 Ignoring vote change broadcast (${reason})`);
           }
         })
         .on('broadcast', { event: 'vote-changed' }, (payload) => {
@@ -1869,19 +1911,16 @@ export default function VotingSession({
         )}
         
         {/* Navigation Controls */}
-        <NavigationControls />
-
-        <div className="grid lg:grid-cols-2 gap-6">
+        <NavigationControls />        <div className="grid lg:grid-cols-2 gap-6">
           {/* Voting Cards */}
           <div>
             <VotingCards
               onVote={handleVote}
               selectedVote={myVote}
-              disabled={isRevealed || loading}
+              disabled={loading}
               estimationType={estimationType}
             />
-            
-            {/* User's Vote Display */}
+              {/* User's Vote Display */}
             {myVote && (
               <div className="mt-4 bg-white rounded-xl p-4 shadow-lg border border-gray-200">
                 <div className="flex items-center justify-between">
@@ -1894,6 +1933,18 @@ export default function VotingSession({
                     </span>
                     {!isRevealed && !loading && (
                       <span className="text-sm text-gray-500">(You can change this)</span>
+                    )}                    {isRevealed && !loading && (
+                      <button
+                        onClick={() => {
+                          setMyVote(null);
+                          setVoteNotification('You can now select a new vote from the cards above');
+                          setTimeout(() => setVoteNotification(null), 3000);
+                        }}
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded-lg text-sm font-medium transition-colors flex items-center gap-1"
+                        title="Edit your vote"
+                      >
+                        ✏️ Edit Vote
+                      </button>
                     )}
                     {loading && (
                       <div className="flex items-center gap-2 text-sm text-blue-600">
@@ -1903,16 +1954,37 @@ export default function VotingSession({
                     )}
                   </div>
                 </div>
+                {isRevealed && (
+                  <div className="mt-2 text-xs text-gray-500">
+                    💡 You can edit your vote even after reveal - changes will be shown to all participants
+                  </div>
+                )}
               </div>
-            )}
-
-            {/* Vote submission instructions */}
-            {!myVote && !isRevealed && (
-              <div className="mt-4 bg-blue-50 border border-blue-200 rounded-xl p-4">
-                <div className="flex items-center gap-2 text-blue-800">
-                  <div className="w-2 h-2 bg-blue-600 rounded-full animate-pulse"></div>
-                  <span className="font-medium text-sm">Select your estimate above to participate in voting</span>
+            )}            {/* Vote submission instructions */}
+            {!myVote && (
+              <div className={`mt-4 rounded-xl p-4 ${
+                isRevealed 
+                  ? 'bg-green-50 border border-green-200' 
+                  : 'bg-blue-50 border border-blue-200'
+              }`}>
+                <div className={`flex items-center gap-2 ${
+                  isRevealed ? 'text-green-800' : 'text-blue-800'
+                }`}>
+                  <div className={`w-2 h-2 rounded-full animate-pulse ${
+                    isRevealed ? 'bg-green-600' : 'bg-blue-600'
+                  }`}></div>
+                  <span className="font-medium text-sm">
+                    {isRevealed 
+                      ? "✏️ Select your new estimate above to update your vote" 
+                      : "Select your estimate above to participate in voting"
+                    }
+                  </span>
                 </div>
+                {isRevealed && (
+                  <div className="mt-2 text-xs text-green-700">
+                    🎯 Your new vote will be saved and all participants will see the updated results
+                  </div>
+                )}
               </div>
             )}
           </div>
