@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { BacklogItem, User } from '../types';
 import { Plus, FileText, AlertCircle, CheckCircle, Upload, Trash2, Edit3, Save, X, Calendar, Users, Play, Share } from 'lucide-react';
 import { generateSampleBacklog } from '../utils/planningPoker';
@@ -6,6 +6,7 @@ import { getActivePlanningSessions, startPlanningSession, deletePlanningSession,
 import VotingSession from './VotingSession';
 import SessionInvite from './SessionInvite';
 import UserIcon from './UserIcon';
+import { supabase } from '../supabaseClient';
 
 interface PlanningDashboardProps {
   backlogItems: BacklogItem[];
@@ -24,8 +25,11 @@ export default function PlanningDashboard({ backlogItems, onBacklogUpdate, curre
   const [sessionItems, setSessionItems] = useState<BacklogItem[]>([]);
   const [assignedItemIds, setAssignedItemIds] = useState<string[]>([]);
   const [sessionsWithItems, setSessionsWithItems] = useState<{[key: string]: BacklogItem[]}>({});
-  const [inviteSession, setInviteSession] = useState<any | null>(null);
-  const [showDevPanel, setShowDevPanel] = useState(false);
+  const [inviteSession, setInviteSession] = useState<any | null>(null);  const [showDevPanel, setShowDevPanel] = useState(false);
+  
+  // Ref to track current sessions for real-time callbacks
+  const sessionsRef = useRef<any[]>([]);
+  
   const [newItem, setNewItem] = useState<{
     title: string;
     description: string;
@@ -37,17 +41,163 @@ export default function PlanningDashboard({ backlogItems, onBacklogUpdate, curre
     priority: 'Medium',
     acceptanceCriteria: ''
   });
-
   useEffect(() => {
     loadSessions();
     loadBacklogItems();
     loadAssignedItems();
   }, []);
 
+  // Real-time subscriptions for dashboard updates
+  useEffect(() => {
+    console.log('🔄 Setting up dashboard real-time subscriptions');
+
+    // Create channel for dashboard updates
+    const dashboardChannel = supabase.channel('dashboard-updates')
+      // Listen for backlog item changes (story points updates)
+      .on('postgres_changes', 
+        { 
+          event: 'UPDATE', 
+          schema: 'public', 
+          table: 'backlog_items' 
+        }, 
+        (payload) => {
+          console.log('📝 Backlog item updated:', payload);
+          // Reload backlog items to get the latest data
+          loadBacklogItems();
+        }
+      )      // Listen for new planning sessions
+      .on('postgres_changes', 
+        { 
+          event: 'INSERT', 
+          schema: 'public', 
+          table: 'planning_sessions' 
+        }, 
+        async (payload) => {
+          console.log('🆕 New planning session created:', payload);
+          console.log('🔄 Current sessions before reload:', sessionsRef.current.length);
+          
+          // Add a delay to ensure the database transaction is committed
+          setTimeout(async () => {
+            try {
+              await loadSessions();
+              console.log('✅ Sessions reloaded after new session creation');
+            } catch (error) {
+              console.error('❌ Error reloading sessions:', error);
+            }
+          }, 500);
+        }
+      )// Listen for planning session updates (like status changes)
+      .on('postgres_changes', 
+        { 
+          event: 'UPDATE', 
+          schema: 'public', 
+          table: 'planning_sessions' 
+        }, 
+        (payload) => {
+          console.log('📋 Planning session updated:', payload);
+          loadSessions();
+        }
+      )
+      // Listen for planning session deletions
+      .on('postgres_changes', 
+        { 
+          event: 'DELETE', 
+          schema: 'public', 
+          table: 'planning_sessions' 
+        }, 
+        (payload) => {
+          console.log('🗑️ Planning session deleted:', payload);
+          loadSessions();
+        }
+      )      // Listen for session item assignments/removals
+      .on('postgres_changes', 
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'session_items' 
+        }, 
+        (payload) => {
+          console.log('🔗 Session items changed:', payload);
+          console.log('🔗 Event type:', payload.eventType);
+          console.log('🔗 New record:', payload.new);
+          console.log('🔗 Old record:', payload.old);
+          
+          if (payload.eventType === 'INSERT') {
+            console.log('➕ Item was added to a session');
+          } else if (payload.eventType === 'DELETE') {
+            console.log('➖ Item was removed from a session (back to backlog)');
+          } else if (payload.eventType === 'UPDATE') {
+            console.log('🔄 Session item was updated');
+          }
+          
+          // Reload assigned items and session data
+          console.log('🔄 Reloading assigned items due to session_items change...');
+          loadAssignedItems();
+          
+          // Also reload backlog items to ensure filtering works correctly
+          console.log('🔄 Reloading backlog items due to session_items change...');
+          loadBacklogItems();
+          
+          // Use ref to avoid stale closure
+          if (sessionsRef.current.length > 0) {
+            console.log('🔄 Reloading sessions with items...');
+            loadSessionsWithItems();
+          }
+          
+          // Show a notification to participants about the change
+          if (payload.eventType === 'INSERT') {
+            console.log('📢 Item moved to session - should disappear from backlog');
+          } else if (payload.eventType === 'DELETE') {
+            console.log('📢 Item returned to backlog - should reappear in backlog');
+          }
+        }
+      ).subscribe((status) => {
+        console.log('📡 Dashboard subscription status:', status);
+        if (status === 'SUBSCRIBED') {
+          console.log('✅ Successfully subscribed to dashboard real-time updates');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('❌ Dashboard subscription error');
+        } else if (status === 'TIMED_OUT') {
+          console.error('⏰ Dashboard subscription timed out');
+        } else if (status === 'CLOSED') {
+          console.log('🔒 Dashboard subscription closed');
+        }
+      });// Cleanup subscription on unmount
+    return () => {
+      console.log('🧹 Cleaning up dashboard subscriptions');
+      dashboardChannel.unsubscribe();
+    };
+  }, []); // No dependencies needed since we use refs
+  // Also refresh data when user returns to dashboard (e.g., from voting session)
+  // And add periodic polling as fallback for real-time updates
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        console.log('👁️ Dashboard became visible - refreshing data');
+        loadBacklogItems();
+        loadSessions();
+        loadAssignedItems();
+      }
+    };    // Add frequent polling every 1 second to ensure data stays synchronized
+    const pollInterval = setInterval(() => {
+      console.log('🔄 Auto-refresh (1s) - updating all data');
+      loadSessions();
+      loadBacklogItems();
+      loadAssignedItems(); // This is crucial for session item assignments
+    }, 1000); // 1 second for immediate synchronization
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      clearInterval(pollInterval);
+    };
+  }, []);
   const loadSessions = async () => {
     try {
       const activeSessions = await getActivePlanningSessions();
       setSessions(activeSessions);
+      sessionsRef.current = activeSessions;
     } catch (error) {
       console.error('Error loading sessions:', error);
     }
@@ -72,11 +222,13 @@ export default function PlanningDashboard({ backlogItems, onBacklogUpdate, curre
       console.error('Error loading backlog items:', error);
     }
   };
-
   const loadAssignedItems = async () => {
     try {
+      console.log('📋 Loading assigned items...');
       const assignedIds = await getAssignedItems();
+      console.log('📋 Assigned item IDs received:', assignedIds);
       setAssignedItemIds(assignedIds);
+      console.log('📋 Assigned item IDs state updated');
     } catch (error) {
       console.error('Error loading assigned items:', error);
     }
@@ -186,23 +338,45 @@ export default function PlanningDashboard({ backlogItems, onBacklogUpdate, curre
     } catch (error) {
       console.error('Error deleting item:', error);
     }
-  };
-
-  const handleCreateSession = async () => {
+  };  const handleCreateSession = async () => {
     if (!sessionName.trim()) return;
     try {
+      console.log('🚀 Creating new session:', sessionName);
       const session = await startPlanningSession(sessionName, currentUser.id);
-      setSessions([...sessions, session]);
+      console.log('✅ Session created successfully:', session);
+      
+      // Immediately update local state for the user who created the session
+      const updatedSessions = [...sessions, session];
+      setSessions(updatedSessions);
+      sessionsRef.current = updatedSessions;
       setSessionName('');
+      
+      console.log('📊 Local sessions updated, count:', updatedSessions.length);
+      
+      // Force a refresh of all sessions to ensure consistency
+      setTimeout(async () => {
+        try {
+          console.log('🔄 Force refreshing sessions after creation...');
+          const refreshedSessions = await getActivePlanningSessions();
+          setSessions(refreshedSessions);
+          sessionsRef.current = refreshedSessions;
+          console.log('✅ Sessions force-refreshed, count:', refreshedSessions.length);
+        } catch (error) {
+          console.error('❌ Error force-refreshing sessions:', error);
+        }
+      }, 1000); // Delay to ensure database commit
+      
+      // The real-time subscription should also trigger for other users
     } catch (error) {
-      console.error('Error creating session:', error);
+      console.error('❌ Error creating session:', error);
     }
   };
-
   const handleDeleteSession = async (sessionId: string) => {
     try {
       await deletePlanningSession(sessionId);
-      setSessions(sessions.filter(s => s.id !== sessionId));
+      const updatedSessions = sessions.filter(s => s.id !== sessionId);
+      setSessions(updatedSessions);
+      sessionsRef.current = updatedSessions;
     } catch (error) {
       console.error('Error deleting session:', error);
     }
@@ -224,56 +398,61 @@ export default function PlanningDashboard({ backlogItems, onBacklogUpdate, curre
     e.preventDefault();
     if (draggedItem) {
       try {
-        console.log('Dropping item:', draggedItem.title, 'to session:', sessionId);
+        console.log('🎯 Dropping item:', draggedItem.title, 'to session:', sessionId);
         
         // First, remove item from any existing session
         for (const [existingSessionId, items] of Object.entries(sessionsWithItems)) {
           if (items.some(item => item.id === draggedItem.id)) {
+            console.log(`🗑️ Removing item ${draggedItem.title} from existing session ${existingSessionId}`);
             await removeItemFromSession(existingSessionId, draggedItem.id);
-            console.log(`Removed item ${draggedItem.title} from session ${existingSessionId}`);
+            console.log(`✅ Removed item ${draggedItem.title} from session ${existingSessionId}`);
             break;
           }
         }
         
         // Then add to the new session
+        console.log(`➕ Adding item ${draggedItem.title} to session ${sessionId}`);
         const result = await addItemToSession(sessionId, draggedItem.id);
-        console.log('Item added to session:', result);
+        console.log('📡 Item added to session - this should trigger real-time INSERT event:', result);
         
         if (result.message === 'Item already in session') {
           console.log(`"${draggedItem.title}" is already in this session.`);
         } else {
-          console.log(`Successfully moved "${draggedItem.title}" to session!`);
+          console.log(`✅ Successfully moved "${draggedItem.title}" to session!`);
         }        
         setDraggedItem(null);
         // Refresh assigned items and sessions
+        console.log('🔄 Refreshing local data after item move...');
         await refreshAllData();
-        console.log(`Successfully moved "${draggedItem.title}" to session!`);
+        console.log(`🎉 Successfully moved "${draggedItem.title}" to session!`);
       } catch (error: any) {
-        console.error('Error moving item to session:', error);
+        console.error('❌ Error moving item to session:', error);
         setDraggedItem(null);
       }
     }
   };
   const handleDropToBacklog = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
-    if (draggedItem) {
-      try {
-        console.log('Dropping item back to backlog:', draggedItem.title);
+    if (draggedItem) {      try {
+        console.log('🔄 Dropping item back to backlog:', draggedItem.title);
         
         // Find which session this item belongs to and remove it
         for (const [sessionId, items] of Object.entries(sessionsWithItems)) {
           if (items.some(item => item.id === draggedItem.id)) {
+            console.log(`🗑️ Removing item ${draggedItem.title} from session ${sessionId}`);
             await removeItemFromSession(sessionId, draggedItem.id);
-            console.log(`Removed item ${draggedItem.title} from session ${sessionId}`);
+            console.log(`✅ Successfully removed item ${draggedItem.title} from session ${sessionId}`);
+            console.log('📡 This should trigger a real-time DELETE event for all participants');
             break;
           }
         }
           setDraggedItem(null);
         // Refresh assigned items and sessions
+        console.log('🔄 Refreshing local data after item removal...');
         await refreshAllData();
-        console.log(`Successfully returned "${draggedItem.title}" to backlog!`);
+        console.log(`🎉 Successfully returned "${draggedItem.title}" to backlog!`);
       } catch (error: any) {
-        console.error('Error removing item from session:', error);
+        console.error('❌ Error removing item from session:', error);
         setDraggedItem(null);
       }
     }
@@ -410,11 +589,15 @@ export default function PlanningDashboard({ backlogItems, onBacklogUpdate, curre
               <h2 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                 <FileText className="w-5 h-5" />
                 Product Backlog
-              </h2>
-                <div className="space-y-4 max-h-96 overflow-y-auto">
-                {backlogItems
-                  .filter(item => !assignedItemIds.includes(item.id)) // Hide assigned items
-                  .map((item) => (
+              </h2>                <div className="space-y-4 max-h-96 overflow-y-auto">
+                {(() => {
+                  const unassignedItems = backlogItems.filter(item => !assignedItemIds.includes(item.id));
+                  console.log('🔍 Filtering backlog items:');
+                  console.log('🔍 Total backlog items:', backlogItems.length);
+                  console.log('🔍 Assigned item IDs:', assignedItemIds);
+                  console.log('🔍 Unassigned items after filter:', unassignedItems.length);
+                  return unassignedItems;
+                })().map((item) => (
                   <div
                     key={item.id}
                     draggable
