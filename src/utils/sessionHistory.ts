@@ -189,34 +189,42 @@ export class SessionHistoryService {
       console.error('❌ Error fetching session summary:', error);
       throw error;
     }
-  }
-
-  /**
+  }  /**
    * Calculate participant statistics
    */
   private async calculateParticipantStats(participantIds: string[], estimations: any[]) {
     const stats = [];
 
     for (const userId of participantIds) {
-      // Get user info - you might need to adjust this based on your user table structure
       const userEstimations = estimations.filter(e => e.user_id === userId);
       const totalVotes = userEstimations.length;
 
       // Calculate participation rate based on total stories in session
       const totalStories = [...new Set(estimations.map(e => e.backlog_item_id))].length;
-      const participationRate = totalStories > 0 ? (totalVotes / totalStories) * 100 : 0;
+      const participationRate = totalStories > 0 ? totalVotes / totalStories : 0;
+
+      // Try to get username from session context or use User ID as fallback
+      // In a real app, you'd want to store user names or have a users table
+      const username = this.getUsernameFromContext(userId) || `User ${userId.slice(-6)}`;
 
       stats.push({
         userId,
-        username: `User ${userId}`, // You might want to get actual username from users table
+        username,
         totalVotes,
-        participationRate: Math.round(participationRate)
+        participationRate // Keep as decimal (0-1) for consistency with types
       });
     }
 
     return stats;
   }
-
+  /**
+   * Get username from context (can be enhanced to query a users table)
+   */
+  private getUsernameFromContext(_userId: string): string | null {
+    // This is a placeholder - in a real app you'd query a users table
+    // For now, we'll use a simplified approach
+    return null;
+  }
   /**
    * Calculate story statistics
    */
@@ -230,12 +238,15 @@ export class SessionHistoryService {
       const storyEstimations = estimations.filter(e => e.backlog_item_id === story.id);
       const uniqueVotes = [...new Set(storyEstimations.map(e => e.value))];
       const consensusReached = uniqueVotes.length === 1 && storyEstimations.length > 1;
+      
+      // Calculate voting rounds based on estimation patterns
+      const votingRounds = this.calculateVotingRounds(storyEstimations);
 
       storyStats.push({
         storyId: story.id,
         title: story.title,
         finalEstimate: story.story_points?.toString() || 'Not estimated',
-        votingRounds: 1, // You might want to track this separately
+        votingRounds,
         consensusReached,
         votes: storyEstimations.map(e => ({
           userId: e.user_id,
@@ -248,14 +259,65 @@ export class SessionHistoryService {
   }
 
   /**
+   * Calculate voting rounds for a story based on estimation timestamps
+   */
+  private calculateVotingRounds(storyEstimations: any[]): number {
+    if (storyEstimations.length === 0) return 0;
+    
+    // Group estimations by time windows to detect rounds
+    // If there are updates within short time periods, it suggests multiple rounds
+    const timeWindows = [];
+    const sortedEstimations = storyEstimations.sort((a, b) => 
+      new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    );
+
+    let currentWindow = [sortedEstimations[0]];
+    for (let i = 1; i < sortedEstimations.length; i++) {
+      const currentTime = new Date(sortedEstimations[i].created_at).getTime();
+      const lastTime = new Date(sortedEstimations[i-1].created_at).getTime();
+      
+      // If more than 5 minutes apart, consider it a new round
+      if (currentTime - lastTime > 5 * 60 * 1000) {
+        timeWindows.push(currentWindow);
+        currentWindow = [sortedEstimations[i]];
+      } else {
+        currentWindow.push(sortedEstimations[i]);
+      }
+    }
+    timeWindows.push(currentWindow);
+
+    return Math.max(1, timeWindows.length);
+  }
+  /**
    * Calculate average voting time
    */
   private calculateAverageVotingTime(estimations: any[]): number {
     if (estimations.length === 0) return 0;
 
-    // This is a simplified calculation - you might want to track actual voting times
-    const totalTime = estimations.length * 30; // Assume 30 seconds per vote
-    return Math.round(totalTime / estimations.length);
+    // Calculate actual voting times if timestamps are available
+    let totalVotingTime = 0;
+    let votingTimeCount = 0;
+
+    for (const estimation of estimations) {
+      if (estimation.created_at && estimation.updated_at) {
+        const createdTime = new Date(estimation.created_at).getTime();
+        const updatedTime = new Date(estimation.updated_at).getTime();
+        const votingTime = (updatedTime - createdTime) / 1000; // Convert to seconds
+        
+        if (votingTime > 0 && votingTime < 300) { // Ignore outliers (> 5 minutes)
+          totalVotingTime += votingTime;
+          votingTimeCount++;
+        }
+      }
+    }
+
+    // If we have actual voting times, use them
+    if (votingTimeCount > 0) {
+      return Math.round(totalVotingTime / votingTimeCount);
+    }
+
+    // Fallback: estimate based on session duration and number of votes
+    return 30; // Default 30 seconds per vote
   }
 
   /**
