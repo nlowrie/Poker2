@@ -55,6 +55,8 @@ export default function VotingSession({
   const [isEditingConsensus, setIsEditingConsensus] = useState(false);
   const [editedConsensusValue, setEditedConsensusValue] = useState<string>('');
   const [consensusLoading, setConsensusLoading] = useState(false);
+  const [moderatorVotingEnabled, setModeratorVotingEnabled] = useState(true);
+  const [openVotingEnabled, setOpenVotingEnabled] = useState(false);
 
   // Refs to access current state in broadcast handlers
   const sessionItemsRef = useRef(sessionItems);
@@ -713,6 +715,15 @@ export default function VotingSession({
           } else if (status === 'CHANNEL_ERROR') {
             console.error('❌ Channel subscription error');
             setChannelSubscribed(false);
+          }
+        }).on('broadcast', { event: 'open-voting-changed' }, (payload) => {
+          const { enabled, changedBy, changedByName } = payload.payload;
+          if (changedBy !== user?.id) {
+            setOpenVotingEnabled(enabled);
+            setVoteNotification(
+              `Open Voting was ${enabled ? 'enabled' : 'disabled'} by ${changedByName || 'Moderator'}`
+            );
+            setTimeout(() => setVoteNotification(null), 3000);
           }
         });
 
@@ -1905,7 +1916,14 @@ export default function VotingSession({
     }
     return v.points;
   });
+  // Debug log for vote values and estimation type
+  if (estimationType === 'tshirt') {
+    console.log('[Consensus Debug] voteValues:', voteValues);
+  }
   const { consensus, average, hasConsensus, hasSpecialCards, specialCardCounts, validVotesCount } = calculateConsensus(voteValues, estimationType);
+  if (estimationType === 'tshirt') {
+    console.log('[Consensus Debug] calculateConsensus result:', { consensus, average, hasConsensus, hasSpecialCards, specialCardCounts, validVotesCount });
+  }
 
   // Timer configuration functions
   const handleTimerConfigSave = () => {
@@ -2148,6 +2166,17 @@ export default function VotingSession({
       </div>
     );
   };
+
+  // Determine if votes should be revealed (open voting or moderator revealed)
+  const votesAreRevealed = openVotingEnabled || isRevealed;
+
+  // Add logging before the Team Votes section render
+  console.log('[Open Voting Debug] openVotingEnabled:', openVotingEnabled);
+  console.log('[Open Voting Debug] isRevealed:', isRevealed);
+  console.log('[Open Voting Debug] votesAreRevealed:', votesAreRevealed);
+  console.log('[Open Voting Debug] votes:', votes);
+  console.log('[Open Voting Debug] currentUser:', currentUser);
+  console.log('[Open Voting Debug] currentItem:', currentItem);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-pink-50 p-4">
@@ -2434,22 +2463,62 @@ export default function VotingSession({
           <div>
             {/* Estimation Type Control/Display moved here */}
             {currentUser.role === 'Moderator' ? (
-              <div className="flex items-center gap-2 mb-4">
-                <Settings className="w-4 h-4 text-gray-500" />
-                <label className="text-sm text-gray-600 font-medium">Estimation Type:</label>
-                <select
-                  value={estimationType}
-                  onChange={(e) => handleEstimationTypeChange(e.target.value as 'fibonacci' | 'tshirt')}
-                  className="px-3 py-1 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  disabled={isRevealed}
-                >
-                  <option value="fibonacci">Fibonacci</option>
-                  <option value="tshirt">T-Shirt Sizes</option>
-                </select>
-                {isRevealed && (
-                  <span className="text-xs text-gray-400">(disabled - votes revealed)</span>
-                )}
-              </div>
+              <>
+                <div className="flex items-center gap-2 mb-4">
+                  <Settings className="w-4 h-4 text-gray-500" />
+                  <label className="text-sm text-gray-600 font-medium">Estimation Type:</label>
+                  <select
+                    value={estimationType}
+                    onChange={(e) => handleEstimationTypeChange(e.target.value as 'fibonacci' | 'tshirt')}
+                    className="px-3 py-1 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    disabled={votesAreRevealed}
+                  >
+                    <option value="fibonacci">Fibonacci</option>
+                    <option value="tshirt">T-Shirt Sizes</option>
+                  </select>
+                  {votesAreRevealed && (
+                    <span className="text-xs text-gray-400">(disabled - votes revealed)</span>
+                  )}
+                </div>
+                {/* Moderator Voting Toggle */}
+                <div className="flex items-center gap-2 mb-4">
+                  <label className="text-sm text-gray-600 font-medium" htmlFor="moderator-voting-toggle">Moderator Voting:</label>
+                  <input
+                    id="moderator-voting-toggle"
+                    type="checkbox"
+                    checked={moderatorVotingEnabled}
+                    onChange={e => setModeratorVotingEnabled(e.target.checked)}
+                    className="form-checkbox h-4 w-4 text-blue-600 transition duration-150 rounded focus:ring-2 focus:ring-blue-500"
+                  />
+                  <span className="text-xs text-gray-500">Allow moderator to vote</span>
+                </div>
+                {/* Open Voting Toggle */}
+                <div className="flex items-center gap-2 mb-4">
+                  <label className="text-sm text-gray-600 font-medium" htmlFor="open-voting-toggle">Open Voting:</label>
+                  <input
+                    id="open-voting-toggle"
+                    type="checkbox"
+                    checked={openVotingEnabled}
+                    onChange={async e => {
+                      const enabled = e.target.checked;
+                      setOpenVotingEnabled(enabled);
+                      if (currentUser.role === 'Moderator' && channel && channelSubscribed) {
+                        await channel.send({
+                          type: 'broadcast',
+                          event: 'open-voting-changed',
+                          payload: {
+                            enabled,
+                            changedBy: user?.id,
+                            changedByName: user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Moderator',
+                          },
+                        });
+                      }
+                    }}
+                    className="form-checkbox h-4 w-4 text-blue-600 transition duration-150 rounded focus:ring-2 focus:ring-blue-500"
+                  />
+                  <span className="text-xs text-gray-500">Show votes as soon as they are cast</span>
+                </div>
+              </>
             ) : (
               <div className="flex items-center gap-2 mb-4">
                 <span className="text-sm text-blue-600">Estimation Type:</span>
@@ -2462,12 +2531,15 @@ export default function VotingSession({
                 </span>
               </div>
             )}
-            <VotingCards
-              onVote={handleVote}
-              selectedVote={myVote}
-              disabled={loading || currentItem?.status === 'Estimated'}
-              estimationType={estimationType}
-            />
+            {/* Only show VotingCards for moderator if moderatorVotingEnabled, always show for team members */}
+            {(currentUser.role !== 'Moderator' || moderatorVotingEnabled) && (
+              <VotingCards
+                onVote={handleVote}
+                selectedVote={myVote}
+                disabled={loading || currentItem?.status === 'Estimated'}
+                estimationType={estimationType}
+              />
+            )}
             {/* User's Vote Display */}
             {myVote && (
               <div className="mt-4 bg-white rounded-xl p-4 shadow-lg border border-gray-200">
@@ -2483,12 +2555,12 @@ export default function VotingSession({
                         ? CARD_LABELS[Number(myVote)]
                         : myVote
                       }
-                    </span>{!isRevealed && !loading && currentItem?.status !== 'Estimated' && (
+                    </span>{!votesAreRevealed && !loading && currentItem?.status !== 'Estimated' && (
                       <span className="text-sm text-gray-500">(You can change this)</span>
                     )}
-                    {!isRevealed && !loading && currentItem?.status === 'Estimated' && (
+                    {!votesAreRevealed && !loading && currentItem?.status === 'Estimated' && (
                       <span className="text-sm text-green-600">(Item already estimated)</span>
-                    )}                    {isRevealed && !loading && currentItem?.status !== 'Estimated' && (
+                    )}                    {votesAreRevealed && !loading && currentItem?.status !== 'Estimated' && (
                       <button
                         onClick={() => {
                           setMyVote(null);
@@ -2501,7 +2573,7 @@ export default function VotingSession({
                         ✏️ Edit Vote
                       </button>
                     )}
-                    {isRevealed && !loading && currentItem?.status === 'Estimated' && (
+                    {votesAreRevealed && !loading && currentItem?.status === 'Estimated' && (
                       <span className="text-sm text-green-600 font-medium">✓ Estimate Finalized</span>
                     )}
                     {loading && (
@@ -2511,12 +2583,12 @@ export default function VotingSession({
                       </div>
                     )}
                   </div>
-                </div>                {isRevealed && currentItem?.status !== 'Estimated' && (
+                </div>                {votesAreRevealed && currentItem?.status !== 'Estimated' && (
                   <div className="mt-2 text-xs text-gray-500">
                     💡 You can edit your vote even after reveal - changes will be shown to all participants
                   </div>
                 )}
-                {isRevealed && currentItem?.status === 'Estimated' && (
+                {votesAreRevealed && currentItem?.status === 'Estimated' && (
                   <div className="mt-2 text-xs text-green-600">
                     ✓ This item has been finalized with an accepted estimate
                   </div>
@@ -2525,24 +2597,24 @@ export default function VotingSession({
             )}            {/* Vote submission instructions */}
             {!myVote && currentItem?.status !== 'Estimated' && (
               <div className={`mt-4 rounded-xl p-4 ${
-                isRevealed 
+                votesAreRevealed 
                   ? 'bg-green-50 border border-green-200' 
                   : 'bg-blue-50 border border-blue-200'
               }`}>
                 <div className={`flex items-center gap-2 ${
-                  isRevealed ? 'text-green-800' : 'text-blue-800'
+                  votesAreRevealed ? 'text-green-800' : 'text-blue-800'
                 }`}>
                   <div className={`w-2 h-2 rounded-full animate-pulse ${
-                    isRevealed ? 'bg-green-600' : 'bg-blue-600'
+                    votesAreRevealed ? 'bg-green-600' : 'bg-blue-600'
                   }`}></div>
                   <span className="font-medium text-sm">
-                    {isRevealed 
+                    {votesAreRevealed 
                       ? "✏️ Select your new estimate above to update your vote" 
                       : "Select your estimate above to participate in voting"
                     }
                   </span>
                 </div>
-                {isRevealed && (
+                {votesAreRevealed && (
                   <div className="mt-2 text-xs text-green-700">
                     🎯 Your new vote will be saved and all participants will see the updated results
                   </div>
@@ -2568,13 +2640,13 @@ export default function VotingSession({
           <div className="bg-white rounded-xl p-6 shadow-lg border border-gray-200">            <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-gray-900">Team Votes</h3>
               <div className="flex items-center gap-3">
-                {currentItem?.status === 'Estimated' && isRevealed && (
+                {currentItem?.status === 'Estimated' && votesAreRevealed && (
                   <span className="text-sm text-green-600 font-medium flex items-center gap-1">
                     <CheckCircle className="w-4 h-4" />
                     Auto-revealed (Item Estimated)
                   </span>
                 )}
-                {currentUser.role === 'Moderator' && votes.length > 0 && !isRevealed && (
+                {currentUser.role === 'Moderator' && votes.length > 0 && !votesAreRevealed && !openVotingEnabled && (
                   <button
                     onClick={revealVotes}
                     className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors duration-200 flex items-center gap-2"
@@ -2604,6 +2676,7 @@ export default function VotingSession({
               )}
                 {!votesLoading && votes.length > 0 && votes.map((vote) => {
                 console.log('🔍 RENDERING VOTE:', vote);
+                console.log('[Open Voting Debug] Rendering vote:', vote, 'votesAreRevealed:', votesAreRevealed);
                 return (
                 <div key={vote.userId} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg transition-all duration-300 hover:bg-gray-100">
                   <div className="flex items-center gap-3">
@@ -2627,7 +2700,7 @@ export default function VotingSession({
                         {new Date(vote.timestamp).toLocaleTimeString()}
                       </span>
                     )}                    <div className={`
-                      px-3 py-1 rounded-lg font-bold transition-all duration-300                      ${isRevealed 
+                      px-3 py-1 rounded-lg font-bold transition-all duration-300                      ${votesAreRevealed 
                         ? estimationType === 'fibonacci' 
                           ? Number(vote.points) === SPECIAL_CARDS.NEED_INFO || Number(vote.points) === SPECIAL_CARDS.TOO_BIG
                             ? 'bg-yellow-100 text-yellow-800'
@@ -2635,7 +2708,7 @@ export default function VotingSession({
                           : 'bg-purple-100 text-purple-800'
                         : 'bg-gray-300 text-gray-300'
                       }
-                    `}>                      {isRevealed 
+                    `}>                      {votesAreRevealed 
                         ? estimationType === 'fibonacci' && CARD_LABELS[Number(vote.points)]
                           ? CARD_LABELS[Number(vote.points)]
                           : vote.points
@@ -2664,7 +2737,7 @@ export default function VotingSession({
               return null;
             })()}
 
-            {isRevealed && votes.length > 0 && (
+            {votesAreRevealed && votes.length > 0 && (
               <div className={`mt-6 p-4 rounded-xl border ${
                 estimationType === 'fibonacci' 
                   ? 'bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200'
@@ -2726,8 +2799,20 @@ export default function VotingSession({
                   ) : (
                     <div className="mb-2">
                       <div className="text-3xl font-bold text-gray-900 mb-2 flex items-center justify-center gap-2">
+                        {/* Debug log for consensus display */}
+                        {(() => {
+                          if (estimationType === 'tshirt') {
+                            console.log('[Consensus Display Debug]', {
+                              moderatorConsensus,
+                              consensus,
+                              estimationType,
+                              average
+                            });
+                          }
+                          return null;
+                        })()}
                         <span>
-                          {moderatorConsensus || consensus || (estimationType === 'fibonacci' ? average.toFixed(1) : 'M')}
+                          {moderatorConsensus || (estimationType === 'tshirt' ? (consensus || 'M') : consensus || average.toFixed(1))}
                           {estimationType === 'fibonacci' ? ' SP' : ''}
                         </span>
                         {currentUser.role === 'Moderator' && (
