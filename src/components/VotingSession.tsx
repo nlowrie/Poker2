@@ -1599,8 +1599,8 @@ export default function VotingSession({
     }
   };  // Timer UI Component
   const TimerDisplay = () => {
-    // Always show timer display if there's a current item
-    if (!currentItem) return null;
+    // Only show timer display for moderators
+    if (!currentItem || currentUser.role !== 'Moderator') return null;
 
     const totalTime = votingTimeLimit; // Use configured timer limit
     const progress = timeRemaining !== null ? ((totalTime - timeRemaining) / totalTime) * 100 : 0;
@@ -2344,6 +2344,20 @@ export default function VotingSession({
 
         {/* Timer Display */}
         <TimerDisplay />
+        {/* Timer Paused Banner for Team Members */}
+        {!timerActive && timeRemaining !== null && timeRemaining > 0 && currentUser.role === 'Team Member' && (
+          <div className="bg-gradient-to-r from-yellow-500 to-orange-400 text-white rounded-xl p-4 mb-6 shadow-lg">
+            <div className="flex items-center justify-center gap-3">
+              <Clock className="w-6 h-6" />
+              <div className="text-center">
+                <div className="font-bold text-lg">⏸️ Timer Paused</div>
+                <div className="text-sm opacity-90">
+                  Waiting for moderator to resume - {timeRemaining && formatTime(timeRemaining)} remaining
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
           {/* Enhanced Timer Notification Banners for Team Members */}
         {timerActive && currentUser.role === 'Team Member' && timeRemaining !== null && (
           <div className={`text-white rounded-xl p-4 mb-6 shadow-lg transition-all duration-300 ${
@@ -2381,21 +2395,6 @@ export default function VotingSession({
                     Votes will be auto-revealed when timer ends!
                   </div>
                 )}
-              </div>
-            </div>
-          </div>
-        )}
-        
-        {/* Timer Paused Banner for Team Members */}
-        {!timerActive && timeRemaining !== null && timeRemaining > 0 && currentUser.role === 'Team Member' && (
-          <div className="bg-gradient-to-r from-yellow-500 to-orange-400 text-white rounded-xl p-4 mb-6 shadow-lg">
-            <div className="flex items-center justify-center gap-3">
-              <Clock className="w-6 h-6" />
-              <div className="text-center">
-                <div className="font-bold text-lg">⏸️ Timer Paused</div>
-                <div className="text-sm opacity-90">
-                  Waiting for moderator to resume - {timeRemaining && formatTime(timeRemaining)} remaining
-                </div>
               </div>
             </div>
           </div>
