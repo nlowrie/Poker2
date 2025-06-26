@@ -65,9 +65,14 @@ export function calculateConsensus(votes: (number | string)[], estimationType: '
   let numericVotes: number[];
   
   if (estimationType === 'tshirt') {
-    numericVotes = validVotes.map(vote => 
-      typeof vote === 'string' ? TSHIRT_VALUES[vote] || 0 : vote as number
-    );
+    // Use index-based mapping for t-shirt sizes
+    numericVotes = validVotes.map(vote => {
+      if (typeof vote === 'string') {
+        const idx = TSHIRT_SIZES.indexOf(vote);
+        return idx !== -1 ? idx : -1;
+      }
+      return -1;
+    }).filter(idx => idx !== -1);
   } else {
     numericVotes = validVotes.map(vote => {
       if (typeof vote === 'number') return vote;
@@ -93,17 +98,20 @@ export function calculateConsensus(votes: (number | string)[], estimationType: '
     (uniqueValidVotes.size === 2 && isAdjacentEstimate(Array.from(uniqueValidVotes), estimationType)));
   
   let consensus: number | string | null = null;
-  if (hasConsensus && validVotes.length > 0) {
-    if (estimationType === 'tshirt') {
-      // Find the closest T-shirt size to the average
-      const closestValue = Object.entries(TSHIRT_VALUES)
-        .reduce((prev, curr) => 
-          Math.abs(curr[1] - average) < Math.abs(prev[1] - average) ? curr : prev
-        );
-      consensus = closestValue[0];
-    } else {
-      consensus = Math.round(average);
-    }
+  if (estimationType === 'tshirt' && validVotes.length > 0) {
+    // Always show consensus for t-shirt sizes based on average index
+    const indices = validVotes.map(vote => {
+      if (typeof vote === 'string') {
+        const idx = TSHIRT_SIZES.indexOf(vote);
+        return idx !== -1 ? idx : -1;
+      }
+      return -1;
+    }).filter(idx => idx !== -1);
+    const avgIndex = indices.length > 0 ? indices.reduce((a, b) => a + b, 0) / indices.length : 0;
+    const ceilIndex = Math.ceil(avgIndex);
+    consensus = TSHIRT_SIZES[Math.min(Math.max(ceilIndex, 0), TSHIRT_SIZES.length - 1)];
+  } else if (hasConsensus && validVotes.length > 0) {
+    consensus = Math.round(average);
   }
   
   return { 
