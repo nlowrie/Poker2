@@ -4,7 +4,13 @@ import { supabase } from '../supabaseClient';
 export async function startPlanningSession(name: string, started_by: string) {
   const { data, error } = await supabase
     .from('planning_sessions')
-    .insert([{ name, started_by, is_active: true }])
+    .insert([{
+      name,
+      started_by,
+      is_active: true,
+      status: 'active',
+      started_at: new Date().toISOString()
+    }])
     .select()
     .single();
   if (error) throw error;
@@ -194,6 +200,7 @@ export async function createBacklogItem(item: {
   description: string;
   priority: string;
   acceptanceCriteria: string[];
+  created_by: string;
 }) {
   const { data, error } = await supabase
     .from('backlog_items')
@@ -201,7 +208,8 @@ export async function createBacklogItem(item: {
       title: item.title,
       description: item.description,
       priority: item.priority,
-      acceptance_criteria: item.acceptanceCriteria
+      acceptance_criteria: item.acceptanceCriteria,
+      created_by: item.created_by
     }])
     .select()
     .single();

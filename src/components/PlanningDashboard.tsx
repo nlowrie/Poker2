@@ -228,6 +228,25 @@ export default function PlanningDashboard({ backlogItems, onBacklogUpdate, curre
   const loadSessions = async () => {
     try {
       const activeSessions = await getActivePlanningSessions();
+      console.log('🧵 Raw activeSessions from DB:', activeSessions);
+      if (!activeSessions || activeSessions.length === 0) {
+        console.warn('⚠️ No active sessions returned. Possible reasons:');
+        console.warn('- Row Level Security (RLS) policy is blocking access');
+        console.warn('- No sessions with is_active=true');
+        console.warn('- Database error or misconfiguration');
+      } else {
+        // Optionally log each session's key fields
+        activeSessions.forEach((s, i) => {
+          console.log(`Session[${i}]:`, {
+            id: s.id,
+            name: s.name,
+            is_active: s.is_active,
+            status: s.status,
+            started_by: s.started_by,
+            started_at: s.started_at
+          });
+        });
+      }
       setSessions(activeSessions);
       sessionsRef.current = activeSessions;
     } catch (error) {
@@ -304,23 +323,21 @@ export default function PlanningDashboard({ backlogItems, onBacklogUpdate, curre
         title: newItem.title,
         description: newItem.description,
         priority: newItem.priority,
-        acceptanceCriteria: newItem.acceptanceCriteria.split('\n').filter(c => c.trim())
+        acceptanceCriteria: newItem.acceptanceCriteria.split('\n').filter(c => c.trim()),
+        created_by: currentUser.id
       });
-      
-      const formattedItem = {
-        id: dbItem.id,
-        title: dbItem.title,
-        description: dbItem.description,
-        priority: dbItem.priority,
-        status: dbItem.status,
-        acceptanceCriteria: dbItem.acceptance_criteria || []
-      };
-      
-      onBacklogUpdate([...backlogItems, formattedItem]);
+      console.log('createBacklogItem result:', dbItem); // Debug log
+      if (!dbItem || !dbItem.id) {
+        showNotification('error', 'Failed to add item to the product backlog.');
+        return;
+      }
       setNewItem({ title: '', description: '', priority: 'Medium', acceptanceCriteria: '' });
-      setShowAddForm(false);
+      showNotification('success', 'Backlog item added successfully!');
+      await loadBacklogItems(); // Always reload from DB after insert
     } catch (error) {
+      const message = (error instanceof Error) ? error.message : String(error);
       console.error('Error adding item:', error);
+      showNotification('error', 'Error adding item: ' + message);
     }
   };
 
@@ -565,9 +582,15 @@ export default function PlanningDashboard({ backlogItems, onBacklogUpdate, curre
   };  const handleDrop = async (e: React.DragEvent<HTMLDivElement>, sessionId: string) => {
     e.preventDefault();
     if (draggedItem) {
+      // Check if the dragged item exists in the current backlogItems
+      const existsInBacklog = backlogItems.some(item => item.id === draggedItem.id);
+      if (!existsInBacklog) {
+        showNotification('error', `Cannot assign item: Backlog item with id ${draggedItem.id} is missing from the backlog. Please refresh or re-add the item.`);
+        setDraggedItem(null);
+        return;
+      }
       try {
         console.log('🎯 Dropping item:', draggedItem.title, 'to session:', sessionId);
-        
         // First, remove item from any existing session
         for (const [existingSessionId, items] of Object.entries(sessionsWithItems)) {
           if (items.some(item => item.id === draggedItem.id)) {
@@ -577,17 +600,15 @@ export default function PlanningDashboard({ backlogItems, onBacklogUpdate, curre
             break;
           }
         }
-        
         // Then add to the new session
         console.log(`➕ Adding item ${draggedItem.title} to session ${sessionId}`);
         const result = await addItemToSession(sessionId, draggedItem.id);
         console.log('📡 Item added to session - this should trigger real-time INSERT event:', result);
-        
         if (result.message === 'Item already in session') {
           console.log(`"${draggedItem.title}" is already in this session.`);
         } else {
           console.log(`✅ Successfully moved "${draggedItem.title}" to session!`);
-        }        
+        }
         setDraggedItem(null);
         // Refresh assigned items and sessions
         console.log('🔄 Refreshing local data after item move...');
@@ -661,15 +682,14 @@ export default function PlanningDashboard({ backlogItems, onBacklogUpdate, curre
     try {
       const sampleItems = generateSampleBacklog();
       const createdItems = [];
-      
       for (const item of sampleItems) {
         const dbItem = await createBacklogItem({
           title: item.title,
           description: item.description,
           priority: item.priority,
-          acceptanceCriteria: item.acceptanceCriteria || []
+          acceptanceCriteria: item.acceptanceCriteria || [],
+          created_by: currentUser.id // Fix: add required field
         });
-        
         createdItems.push({
           id: dbItem.id,
           title: dbItem.title,
@@ -679,10 +699,11 @@ export default function PlanningDashboard({ backlogItems, onBacklogUpdate, curre
           acceptanceCriteria: dbItem.acceptance_criteria || []
         });
       }
-      
       onBacklogUpdate([...backlogItems, ...createdItems]);
     } catch (error) {
+      const message = (error instanceof Error) ? error.message : String(error);
       console.error('Error loading sample data:', error);
+      showNotification('error', 'Error loading sample data: ' + message);
     }
   };
 
