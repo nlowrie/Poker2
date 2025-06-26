@@ -529,17 +529,38 @@ export default function PlanningDashboard({ backlogItems, onBacklogUpdate, curre
     }
   };  const handleDeleteSession = async (sessionId: string) => {
     try {
+      console.log('[DeleteSession] Attempting to delete session:', sessionId);
       await deletePlanningSession(sessionId);
-      const updatedSessions = sessions.filter(s => s.id !== sessionId);
-      setSessions(updatedSessions);
-      sessionsRef.current = updatedSessions;
+      console.log('[DeleteSession] Successfully called deletePlanningSession');
+      await loadSessions(); // Always reload from DB after deletion
+      console.log('[DeleteSession] Sessions reloaded after deletion');
     } catch (error) {
-      console.error('Error deleting session:', error);
+      console.error('[DeleteSession] Error deleting session:', error);
     }
   };  const handleEndSession = async (sessionId: string) => {
+    // Fetch session items to check for unestimated stories
+    let unestimatedCount = 0;
+    try {
+      const items = await getSessionItems(sessionId);
+      const sessionBacklogItems = items
+        .filter((item: any) => item.backlog_items)
+        .map((item: any) => ({
+          id: item.backlog_items.id,
+          title: item.backlog_items.title,
+          storyPoints: item.backlog_items.story_points,
+        }));
+      unestimatedCount = sessionBacklogItems.filter(item => item.storyPoints === null || item.storyPoints === undefined || item.storyPoints === '' || item.storyPoints === 'Not estimated').length;
+    } catch (e) {
+      // If error, fallback to no warning
+      unestimatedCount = 0;
+    }
+    let message = 'Are you sure you want to end this session? This will generate a summary and move it to completed sessions.';
+    if (unestimatedCount > 0) {
+      message += `\n\n⚠️ There are ${unestimatedCount} unestimated stories. These will be moved back to the backlog.`;
+    }
     showConfirmDialog(
       'End Session',
-      'Are you sure you want to end this session? This will generate a summary and move it to completed sessions.',
+      message,
       async () => {
         try {
           setEndingSession(sessionId);

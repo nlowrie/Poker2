@@ -48,8 +48,8 @@ export class SessionHistoryService {
         throw estimationsError;
       }
 
-      // Get session items
-      const { data: sessionItems, error: itemsError } = await supabase
+      // --- Move unestimated stories back to backlog ---
+      let sessionItems = (await supabase
         .from('session_items')
         .select(`
           backlog_items (
@@ -59,12 +59,42 @@ export class SessionHistoryService {
             status
           )
         `)
-        .eq('session_id', sessionId);
-
-      if (itemsError) {
-        console.error('❌ Failed to get session items:', itemsError);
-        throw itemsError;
+        .eq('session_id', sessionId)).data;
+      if (!sessionItems) sessionItems = [];
+      const unestimatedStories = sessionItems.filter(item => {
+        const story = (item.backlog_items && !Array.isArray(item.backlog_items)) ? item.backlog_items as { id: string; story_points: any; } : null;
+        return story && (story.story_points === null || story.story_points === undefined);
+      });
+      for (const item of unestimatedStories) {
+        const story = (item.backlog_items && !Array.isArray(item.backlog_items)) ? item.backlog_items as { id: string; story_points: any; } : null;
+        if (!story) continue;
+        // Remove from session_items (fix: use item_id, not backlog_item_id)
+        await supabase
+          .from('session_items')
+          .delete()
+          .eq('session_id', sessionId)
+          .eq('item_id', story.id);
+        // Optionally update backlog item status to 'backlog' or similar
+        await supabase
+          .from('backlog_items')
+          .update({ status: 'backlog' })
+          .eq('id', story.id);
       }
+      // --- End move unestimated stories ---
+
+      // Re-fetch session items for summary (only estimated stories remain)
+      sessionItems = (await supabase
+        .from('session_items')
+        .select(`
+          backlog_items (
+            id,
+            title,
+            story_points,
+            status
+          )
+        `)
+        .eq('session_id', sessionId)).data;
+      if (!sessionItems) sessionItems = [];
 
       // Get unique participants
       const participantIds = [...new Set(estimations?.map(e => e.user_id) || [])];

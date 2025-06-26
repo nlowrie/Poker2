@@ -187,11 +187,17 @@ export async function getEstimationsForSession(session_id: string) {
 
 // Delete a planning session (Product Manager only)
 export async function deletePlanningSession(session_id: string) {
-  const { error } = await supabase
+  console.log('[deletePlanningSession] Attempting to end session (set is_active=false):', session_id);
+  const { data, error } = await supabase
     .from('planning_sessions')
-    .delete()
-    .eq('id', session_id);
-  if (error) throw error;
+    .update({ is_active: false })
+    .eq('id', session_id)
+    .select();
+  if (error) {
+    console.error('[deletePlanningSession] Error:', error);
+    throw error;
+  }
+  console.log('[deletePlanningSession] End session (is_active=false) result:', data);
 }
 
 // Backlog Items Management
