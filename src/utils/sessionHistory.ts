@@ -26,6 +26,9 @@ export class SessionHistoryService {
         throw new Error('Only session creator can end the session');
       }
 
+      console.log('[DEBUG] session.started_by:', session.started_by);
+      console.log('[DEBUG] session.started_by_name:', session.started_by_name);
+
       const endTime = new Date();
       const startTime = new Date(session.started_at);
       const duration = Math.round((endTime.getTime() - startTime.getTime()) / (1000 * 60)); // minutes
@@ -120,7 +123,8 @@ export class SessionHistoryService {
         participants: participantStats,
         stories: storyStats,
         averageVotingTime: this.calculateAverageVotingTime(estimations || []),
-        createdBy: session.started_by,
+        createdBy: session.started_by_name || session.started_by,
+        createdByName: session.started_by_name || undefined,
         roomCode: session.room_code,
         status: 'completed'
       };
@@ -368,7 +372,8 @@ export class SessionHistoryService {
           participants: summary.participants,
           stories: summary.stories,
           average_voting_time: summary.averageVotingTime,
-          created_by: summary.createdBy,
+          created_by: summary.createdBy && summary.createdBy.match(/^[\w-]{36}$/) ? summary.createdBy : null, // Only set if UUID
+          created_by_name: summary.createdByName || null, // Always set from summary
           room_code: summary.roomCode,
           status: summary.status
         }]);

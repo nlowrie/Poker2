@@ -499,7 +499,7 @@ export default function PlanningDashboard({ backlogItems, onBacklogUpdate, curre
     if (!sessionName.trim()) return;
     try {
       console.log('🚀 Creating new session:', sessionName);
-      const session = await startPlanningSession(sessionName, currentUser.id);
+      const session = await startPlanningSession(sessionName, currentUser.id, currentUser.name);
       console.log('✅ Session created successfully:', session);
       
       // Immediately update local state for the user who created the session
@@ -950,9 +950,8 @@ export default function PlanningDashboard({ backlogItems, onBacklogUpdate, curre
                         key={session.id}
                         className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow duration-200 bg-gradient-to-r from-green-50 to-blue-50"
                       >
-                        <div className="flex items-center justify-between mb-2">
-                          <h3 className="font-semibold text-gray-900">{session.name}</h3>
-                          <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center justify-between mb-2 gap-2">
+                          <div className="flex flex-wrap gap-2 justify-end w-full sm:w-auto">
                             <button
                               onClick={() => setInviteSession(session)}
                               className="bg-purple-600 text-white px-3 py-1 rounded-lg hover:bg-purple-700 transition-colors duration-200 flex items-center gap-1"
@@ -997,10 +996,11 @@ export default function PlanningDashboard({ backlogItems, onBacklogUpdate, curre
                               </>
                             )}
                           </div>
+                          <h3 className="font-semibold text-gray-900 truncate max-w-xs w-full mt-2 text-center">{session.name}</h3>
                         </div>
                         <div className="text-xs text-gray-500 flex items-center gap-1 mb-3">
                           <Users className="w-3 h-3" />
-                          Started by: {session.started_by}
+                          Started by: {session.started_by_name || session.started_by}
                         </div>
 
                         {/* Session Items */}
@@ -1129,7 +1129,7 @@ export default function PlanningDashboard({ backlogItems, onBacklogUpdate, curre
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600 mb-3">
                           <div className="flex items-center gap-1">
                             <Users className="w-3 h-3" />
-                            Started by: {session.started_by}
+                            Started by: {session.started_by_name || session.started_by}
                           </div>
                           <div className="flex items-center gap-1">
                             <Clock className="w-3 h-3" />
@@ -1212,7 +1212,7 @@ export default function PlanningDashboard({ backlogItems, onBacklogUpdate, curre
                     <X className="w-6 h-6" />
                   </button>
                 </div>
-                <p className="text-sm text-gray-600 mt-1">Started by: {previewSession.started_by}</p>
+                <p className="text-sm text-gray-600 mt-1">Started by: {previewSession.started_by_name || previewSession.started_by}</p>
               </div>
               
               <div className="p-6 overflow-y-auto max-h-96">

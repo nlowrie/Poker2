@@ -73,7 +73,7 @@ export default function SessionSummaryModal({ summary, onClose }: SessionSummary
             <h1>Planning Poker Session Summary</h1>
             <h2>${summary.title}</h2>
             <p><strong>Duration:</strong> ${Math.round(summary.duration)} minutes</p>
-            <p><strong>Created by:</strong> ${summary.createdBy}</p>
+            <p><strong>Created by:</strong> ${summary.createdBy && summary.createdBy.match(/^\w{8}(-\w{4}){3}-\w{12}$/) ? (summary.createdByName || summary.createdBy) : summary.createdBy}</p>
           </div>
           
           <div class="metrics">

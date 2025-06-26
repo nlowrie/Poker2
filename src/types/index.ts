@@ -71,6 +71,7 @@ export interface SessionSummary {
   }[];
   averageVotingTime: number;
   createdBy: string;
+  createdByName?: string;
   roomCode?: string;
   status: 'completed';
 }

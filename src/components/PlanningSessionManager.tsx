@@ -32,8 +32,13 @@ const PlanningSessionManager: React.FC<PlanningSessionManagerProps> = ({
     setIsCreating(true);
     try {
       // Create the session
-      const session = await startPlanningSession(sessionName, currentUser.id);
-      
+      console.log('[handleStartSession] Creating session with:', {
+        sessionName,
+        userId: currentUser.id,
+        userName: currentUser.name
+      });
+      const session = await startPlanningSession(sessionName, currentUser.id, currentUser.name);
+      console.log('[handleStartSession] Session created:', session);
       // Add selected items to the session
       for (const itemId of selectedItems) {
         await addItemToSession(session.id, itemId);

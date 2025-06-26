@@ -1,12 +1,13 @@
 import { supabase } from '../supabaseClient';
 
 // Start a new planning session (Product Manager)
-export async function startPlanningSession(name: string, started_by: string) {
+export async function startPlanningSession(name: string, started_by: string, started_by_name: string) {
   const { data, error } = await supabase
     .from('planning_sessions')
     .insert([{
       name,
       started_by,
+      started_by_name,
       is_active: true,
       status: 'active',
       started_at: new Date().toISOString()
