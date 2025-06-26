@@ -420,7 +420,7 @@ export default function VotingSession({
             setEditedConsensusValue('');
             
             // The useEffect for estimated items will handle setting reveal state and consensus
-            console.log('� Navigation broadcast handled, useEffect will handle reveal state');
+            console.log('🔄 Navigation broadcast handled, useEffect will handle reveal state');
             
             // Show notification for team members
             if (currentUser.role === 'Team Member') {
@@ -2152,8 +2152,8 @@ export default function VotingSession({
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-pink-50 p-4">
       <div className="max-w-6xl mx-auto">
-        {/* Header */}
-        <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-6 mb-6">
+        {/* Header Section */}
+        <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-6 mb-6">
           <div className="flex items-center justify-between mb-4">
             <button
               onClick={onBackToBacklog}
@@ -2162,116 +2162,90 @@ export default function VotingSession({
               <ArrowLeft className="w-5 h-5" />
               Back to Backlog
             </button>
-            <div className="flex items-center gap-4">
+            <div className="flex-1 flex items-center justify-end gap-4">
+              {/* Video call and chat buttons right-aligned */}
+              <button
+                onClick={() => setIsVideoCallActive(true)}
+                className="flex items-center gap-2 px-3 py-1 rounded-lg transition-colors bg-green-100 text-green-700 hover:bg-green-200"
+                title="Start Video Call"
+              >
+                <Video className="w-4 h-4" />
+                Video Call
+              </button>
+              <button
+                onClick={() => {
+                  const newVisibility = !isChatVisible;
+                  setIsChatVisible(newVisibility);
+                  if (newVisibility) {
+                    setChatUnreadCount(0); // Reset unread count when opening chat
+                  }
+                }}
+                className={`flex items-center gap-2 px-3 py-1 rounded-lg transition-colors relative ${
+                  isChatVisible 
+                    ? 'bg-blue-100 text-blue-700 hover:bg-blue-200' 
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+                title={isChatVisible ? 'Hide Chat' : 'Show Chat'}
+              >
+                <MessageCircle className="w-4 h-4" />
+                Chat
+                {!isChatVisible && chatUnreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                    {chatUnreadCount > 9 ? '9+' : chatUnreadCount}
+                  </span>
+                )}
+              </button>
+              {/* UserIcon on far right */}
               <UserIcon />
-              {currentUser.role === 'Moderator' && (
-                <div className="flex items-center gap-2">
-                  <Settings className="w-4 h-4 text-gray-500" />
-                  <label className="text-sm text-gray-600 font-medium">Estimation Type:</label>
-                  <select
-                    value={estimationType}
-                    onChange={(e) => handleEstimationTypeChange(e.target.value as 'fibonacci' | 'tshirt')}
-                    className="px-3 py-1 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    disabled={isRevealed}
-                  >
-                    <option value="fibonacci">Fibonacci</option>
-                    <option value="tshirt">T-Shirt Sizes</option>
-                  </select>
-                  {isRevealed && (
-                    <span className="text-xs text-gray-400">(disabled - votes revealed)</span>
-                  )}
-                </div>
-              )}
-              <div className="flex items-center gap-4 text-sm text-gray-600">
-                <button
-                  onClick={() => setIsVideoCallActive(true)}
-                  className="flex items-center gap-2 px-3 py-1 rounded-lg transition-colors bg-green-100 text-green-700 hover:bg-green-200"
-                  title="Start Video Call"
-                >
-                  <Video className="w-4 h-4" />
-                  Video Call
-                </button>
-                <button
-                  onClick={() => {
-                    const newVisibility = !isChatVisible;
-                    setIsChatVisible(newVisibility);
-                    if (newVisibility) {
-                      setChatUnreadCount(0); // Reset unread count when opening chat
-                    }
-                  }}
-                  className={`flex items-center gap-2 px-3 py-1 rounded-lg transition-colors relative ${
-                    isChatVisible 
-                      ? 'bg-blue-100 text-blue-700 hover:bg-blue-200' 
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}
-                  title={isChatVisible ? 'Hide Chat' : 'Show Chat'}
-                >
-                  <MessageCircle className="w-4 h-4" />
-                  Chat
-                  {!isChatVisible && chatUnreadCount > 0 && (
-                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-                      {chatUnreadCount > 9 ? '9+' : chatUnreadCount}
+            </div>
+          </div>
+        </div>
+        {/* Session Participants Section */}
+        <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-6 mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-medium text-gray-900 flex items-center gap-2">
+              <Users className="w-4 h-4" />
+              Session Participants ({participants.length})
+            </h3>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {participants.map((participant) => (
+              <div
+                key={participant.id}
+                className="flex items-center gap-2 bg-gray-50 hover:bg-gray-100 transition-colors duration-200 px-3 py-2 rounded-lg border border-gray-200"
+              >
+                <div className="relative">
+                  <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center">
+                    <span className="text-xs font-medium text-blue-800">
+                      {participant.name.charAt(0).toUpperCase()}
                     </span>
-                  )}
-                </button>
-                <div className="flex items-center gap-2">
-                  <Users className="w-4 h-4" />
-                  {votes.length} votes
+                  </div>
+                  <div className={`absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-white ${
+                    participant.isOnline ? 'bg-green-400' : 'bg-gray-400'
+                  }`}></div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Clock className="w-4 h-4" />
-                  Item {currentItemIndex + 1} of {allSessionItems.length}
+                <div className="flex flex-col">
+                  <span className="text-sm font-medium text-gray-900 leading-tight">
+                    {participant.name}
+                    {participant.id === user?.id && (
+                      <span className="text-xs text-blue-600 ml-1">(You)</span>
+                    )}
+                  </span>
+                  <span className="text-xs text-gray-500 leading-tight">
+                    {participant.role}
+                  </span>
                 </div>
               </div>
-            </div>
+            ))}
+            {participants.length === 0 && (
+              <div className="text-sm text-gray-500 italic">
+                Connecting to session...
+              </div>
+            )}
           </div>
-          
-          {/* Participants List */}
-          <div className="border-t border-gray-200 pt-4">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-medium text-gray-900 flex items-center gap-2">
-                <Users className="w-4 h-4" />
-                Session Participants ({participants.length})
-              </h3>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {participants.map((participant) => (
-                <div
-                  key={participant.id}
-                  className="flex items-center gap-2 bg-gray-50 hover:bg-gray-100 transition-colors duration-200 px-3 py-2 rounded-lg border border-gray-200"
-                >
-                  <div className="relative">
-                    <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center">
-                      <span className="text-xs font-medium text-blue-800">
-                        {participant.name.charAt(0).toUpperCase()}
-                      </span>
-                    </div>
-                    <div className={`absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-white ${
-                      participant.isOnline ? 'bg-green-400' : 'bg-gray-400'
-                    }`}></div>
-                  </div>
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium text-gray-900 leading-tight">
-                      {participant.name}
-                      {participant.id === user?.id && (
-                        <span className="text-xs text-blue-600 ml-1">(You)</span>
-                      )}
-                    </span>
-                    <span className="text-xs text-gray-500 leading-tight">
-                      {participant.role}
-                    </span>
-                  </div>
-                </div>
-              ))}
-              {participants.length === 0 && (
-                <div className="text-sm text-gray-500 italic">
-                  Connecting to session...
-                </div>
-              )}
-            </div>
-          </div>
-          
-          {/* Item Change Notification for Team Members */}
+        </div>
+        {/* Product Backlog Item Section */}
+        <div className="bg-white rounded-xl shadow-lg border border-gray-100 p-6 mb-6">
           {currentUser.role === 'Team Member' && (
             <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-4">
               <div className="flex items-center justify-between">
@@ -2299,7 +2273,7 @@ export default function VotingSession({
               </div>
             </div>
           )}
-            <div className="bg-gray-50 rounded-xl p-6">
+          <div className="bg-gray-50 rounded-xl p-6">
             <div className="flex items-start justify-between mb-3">
               <h1 className="text-2xl font-bold text-gray-900">{currentItem.title}</h1>
               <div className="flex items-center gap-3">
@@ -2323,7 +2297,6 @@ export default function VotingSession({
               </div>
             </div>
             <p className="text-gray-700 mb-4">{currentItem.description}</p>
-            
             {currentItem.acceptanceCriteria && currentItem.acceptanceCriteria.length > 0 && (
               <div>
                 <h3 className="font-semibold text-gray-900 mb-2">Acceptance Criteria:</h3>
@@ -2458,7 +2431,38 @@ export default function VotingSession({
 
         <div className="grid lg:grid-cols-2 gap-6">
           {/* Voting Cards */}
-          <div>            <VotingCards
+          <div>
+            {/* Estimation Type Control/Display moved here */}
+            {currentUser.role === 'Moderator' ? (
+              <div className="flex items-center gap-2 mb-4">
+                <Settings className="w-4 h-4 text-gray-500" />
+                <label className="text-sm text-gray-600 font-medium">Estimation Type:</label>
+                <select
+                  value={estimationType}
+                  onChange={(e) => handleEstimationTypeChange(e.target.value as 'fibonacci' | 'tshirt')}
+                  className="px-3 py-1 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  disabled={isRevealed}
+                >
+                  <option value="fibonacci">Fibonacci</option>
+                  <option value="tshirt">T-Shirt Sizes</option>
+                </select>
+                {isRevealed && (
+                  <span className="text-xs text-gray-400">(disabled - votes revealed)</span>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 mb-4">
+                <span className="text-sm text-blue-600">Estimation Type:</span>
+                <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                  estimationType === 'fibonacci' 
+                    ? 'bg-blue-100 text-blue-800' 
+                    : 'bg-purple-100 text-purple-800'
+                }`}>
+                  {estimationType === 'fibonacci' ? 'Fibonacci' : 'T-Shirt Sizes'}
+                </span>
+              </div>
+            )}
+            <VotingCards
               onVote={handleVote}
               selectedVote={myVote}
               disabled={loading || currentItem?.status === 'Estimated'}
@@ -2858,7 +2862,8 @@ export default function VotingSession({
           onClose={() => setIsChatVisible(false)}
           onUnreadCountChange={(count) => setChatUnreadCount(count)}
         />
-      </ErrorBoundary>      {/* Video Conference Modal */}
+      </ErrorBoundary>
+      {/* Video Conference Modal */}
       {isVideoCallActive && (
         <div className="fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center">
           <div className="bg-white rounded-lg w-full h-full max-w-7xl max-h-screen m-4 overflow-hidden">
@@ -2869,7 +2874,6 @@ export default function VotingSession({
           </div>
         </div>
       )}
-
       {/* Timer Configuration Modal */}
       <TimerConfigModal />
     </div>
